@@ -5,6 +5,13 @@ architecture. Each friend's device is intended to own its keys, MLS state,
 encrypted local history, and outgoing queue. A crew-owned helper may later
 assist with rendezvous, ciphertext delivery, or media relay; it is optional.
 
+The planned product client is **Rust/Iced**, not the temporary JavaScript
+visual preview. The owner's [complete architecture PDF](docs/fichas/architecture/sources/architecture-p2p-v0.1.pdf)
+and its [page-by-page transcript](docs/fichas/architecture/sources/README.md)
+are preserved here. [Technology stack](docs/fichas/architecture/tech-stack.md)
+and [ADRs](docs/fichas/README.md) distinguish the decisions retained from
+that PDF from the central-server design later superseded by peer-first.
+
 **Current status:** an early local scaffold, not a secure messaging backend.
 The process exposes a loopback-only status API and a pure policy gate for
 **already verified** MLS commit envelopes. It does not perform MLS,

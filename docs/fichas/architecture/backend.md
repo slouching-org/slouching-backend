@@ -3,7 +3,7 @@
 **Status:** architecture proposal; only a local scaffold and commit-chain policy gate are implemented
 **Revision:** 0.3, 2026-10-07
 **Requirement clarified by the project owner:** friends run Slouching on their own connected computers, over local Wi-Fi or the internet, without depending on a third-party Slouching server. A friend may optionally run a helper for their group.
-**Source input:** `/home/amitis/Downloads/Arquitetura do sistema P2P de comunicação (v0.1)-2.pdf`. Its cryptography and feature goals remain inputs; its mandatory central Elixir/PostgreSQL server is superseded by the requirement above. The previous interpretation is preserved in [the archived draft](archive/centralized-draft.md).
+**Source input:** the [complete owner-provided PDF](sources/architecture-p2p-v0.1.pdf), with a [page-by-page transcript](sources/README.md). Its Rust/Iced client, cryptography, and feature goals remain inputs; its mandatory central Elixir/PostgreSQL server is superseded by the peer-first requirement. The previous interpretation is preserved in [the archived draft](archive/centralized-draft.md). See the [technology stack](tech-stack.md) and [ADRs](../README.md) for current decisions.
 
 ## 1. Product promise and precise limits
 
