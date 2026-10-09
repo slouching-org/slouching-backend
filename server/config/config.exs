@@ -10,6 +10,7 @@ config :slouching_server,
 
 config :slouching_server, SlouchingServer.Repo,
   database: Path.expand("../priv/repo/slouching_dev.sqlite3", __DIR__),
-  pool_size: 5
+  # The local helper has light load; serial startup avoids parallel WAL setup locks.
+  pool_size: 1
 
 import_config "#{config_env()}.exs"

@@ -18,14 +18,21 @@ trap 'exit 143' TERM
 
 database_path="${temp_dir}/smoke.sqlite3"
 port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+database_log="${temp_dir}/database.log"
 
 cd "${server_root}"
-env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
+if ! env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
   SLOUCHING_SQLITE_PATH="${database_path}" \
-  mix ecto.create
-env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
+  mix ecto.create >"${database_log}" 2>&1; then
+  cat "${database_log}" >&2
+  exit 1
+fi
+if ! env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
   SLOUCHING_SQLITE_PATH="${database_path}" \
-  mix ecto.migrate
+  mix ecto.migrate --pool-size 1 >>"${database_log}" 2>&1; then
+  cat "${database_log}" >&2
+  exit 1
+fi
 
 (exec env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
   SLOUCHING_SQLITE_PATH="${database_path}" \
@@ -54,6 +61,12 @@ fi
 
 if [[ "$(cat "${temp_dir}/health.txt")" != "ok" ]]; then
   echo "Unexpected /health response." >&2
+  exit 1
+fi
+
+if grep -Eiq 'database( table)? is locked' "${database_log}" "${temp_dir}/server.log"; then
+  cat "${database_log}" "${temp_dir}/server.log" >&2
+  echo "SQLite startup logged a database lock." >&2
   exit 1
 fi
 

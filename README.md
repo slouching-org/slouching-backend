@@ -27,7 +27,7 @@ authenticate or authorize any device.
 cd server
 mix deps.get
 mix ecto.create
-mix ecto.migrate
+mix ecto.migrate --pool-size 1
 mix test
 mix run --no-halt
 ```
@@ -35,7 +35,9 @@ mix run --no-halt
 For a fresh checkout, `mix setup` runs dependency setup and the two Ecto
 database tasks. Local development uses SQLite at
 `server/priv/repo/slouching_dev.sqlite3`; it creates the file on first use and
-does not need a PostgreSQL service. Run `mix ecto.migrate` after new migrations.
+does not need a PostgreSQL service. The local SQLite Repo uses one connection
+because the optional helper has no high-concurrency workload. Run
+`mix ecto.migrate --pool-size 1` after new migrations.
 This database belongs to the optional Elixir helper and is not a per-user
 desktop-client database; peer-first operation does not require that helper.
 Run `server/scripts/smoke-local-sqlite.sh` to verify setup and the local HTTP

@@ -31,7 +31,11 @@ defmodule SlouchingServer.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "ecto.create", "ecto.migrate"]
+      setup: [
+        "deps.get",
+        "ecto.create",
+        "ecto.migrate --pool-size 1"
+      ]
     ]
   end
 end
