@@ -10,10 +10,14 @@ records the correction from the earlier Rust-only backend interpretation.
 **Current state:** `server/` is a minimal Elixir Mix application with a
 supervised Bandit HTTP diagnostic and a persistent local WebSocket transport
 session after a protobuf v1 handshake. Control Ping/Pong frames keep the
-transport alive. It has no identity, MLS, messaging, persistence,
+transport alive. It has no authenticated identity, MLS, messaging,
 authenticated WebSocket gateway, P2P transport, or calls. The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
+
+The first directory storage increment adds an optional PostgreSQL/Ecto repo,
+the `devices` table, and a 32-byte public signing key constraint. It exposes
+no enrollment endpoint and does not authenticate or authorize any device.
 
 ## Run the Elixir scaffold
 
@@ -42,10 +46,17 @@ WebSocket smoke test kept the connection alive for 16.4 seconds with four
 Pings and observed Pong for each. `peer/` also binds port
 3707 when run, so only start one scaffold at a time.
 
+For local directory storage, set `SLOUCHING_DATABASE_URL` to a PostgreSQL
+connection URL, then run `mix ecto.create` and `mix ecto.migrate` in `server/`.
+The service starts the Repo only when that variable is set. Without it, the
+existing local transport scaffold still runs. See the
+[device directory boundary](docs/fichas/identity/device-directory.md) before
+adding enrollment or lookup routes.
+
 ## Repository layout
 
 ```text
-server/              Elixir/OTP server scaffold and loopback status
+server/              Elixir/OTP server scaffold, loopback transport, and directory schema
 proto/               Shared v1 protobuf handshake schema
 peer/                Preserved Rust peer-first experiment
 docs/fichas/         Source notes, architecture decisions, domain plans

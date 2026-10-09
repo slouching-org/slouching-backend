@@ -20,6 +20,8 @@ defmodule SlouchingServer.MixProject do
       {:bandit, "~> 1.12"},
       {:plug, "~> 1.20"},
       {:jason, "~> 1.4"},
+      {:ecto_sql, "~> 3.13"},
+      {:postgrex, "~> 0.21"},
       {:protobuf, "~> 0.17"},
       {:websock_adapter, "~> 0.6"}
     ]

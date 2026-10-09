@@ -13,9 +13,9 @@ server responsibilities to Elixir/OTP:
 | Domain | Target responsibility | Current implementation |
 | --- | --- | --- |
 | Gateway | Binary client/server WebSocket and signaling | Local protobuf handshake plus Ping/Pong transport only; signaling not implemented |
-| Directory | Device public keys and MLS KeyPackages | Not implemented |
+| Directory | Device public keys and MLS KeyPackages | PostgreSQL device public-key schema only; no enrollment, lookup, or KeyPackages |
 | Delivery | Commit ordering, per-device encrypted inbox, ACK and expiry | Not implemented |
-| Storage | PostgreSQL/Ecto, jobs with Oban, encrypted blob references | Not implemented |
+| Storage | PostgreSQL/Ecto, jobs with Oban, encrypted blob references | Optional Ecto/PostgreSQL Repo and first migration; jobs and blobs absent |
 | Calls | Admission and SFU coordination with `ex_webrtc`; TURN/relay integration | Not implemented |
 | Runtime | Supervision, telemetry, and later cluster coordination | Local Elixir application scaffold only |
 

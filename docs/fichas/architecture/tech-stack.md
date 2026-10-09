@@ -10,7 +10,8 @@ server scaffold. See [ADR 0005](adr-0005-elixir-server-core.md) and the
 | Client cryptography and P2P | Rust; OpenMLS, iroh, SFrame candidates | Not implemented. PDF dependency list is provisional. |
 | Server core | Elixir/OTP, supervised processes | `server/` Mix app with Bandit, development status, and local WebSocket transport session. |
 | Gateway | Binary WebSocket with shared protobuf schema | Bandit/WebSock handshake v1 and control Ping/Pong only; no authenticated session or application traffic. |
-| Delivery and group ordering | Elixir processes, Ecto/PostgreSQL/Oban candidate | Not implemented; no queue, ACK, ordering, or durable state. |
+| Device directory | Ecto/PostgreSQL | Optional Repo and public-key table; no enrollment or lookup. |
+| Delivery and group ordering | Elixir processes, Ecto/PostgreSQL/Oban candidate | Not implemented; no queue, ACK, or ordering. |
 | Group media | Elixir `ex_webrtc` candidate | Not implemented. |
 | Relay | Member-operated TURN/iroh relay candidate | Not implemented. |
 | Historic Rust `peer/` crate | Prior peer-first scaffold | Preserved for review, not the approved Elixir server core. |
