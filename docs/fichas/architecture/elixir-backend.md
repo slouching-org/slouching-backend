@@ -33,6 +33,26 @@ authenticate users, establish a secure channel, or send messages. Future
 product WebSocket/protobuf contracts must specify identity, authorization,
 versioning, retries, ordering, and error semantics before use.
 
+## First direct-LAN peer test
+
+The first same-LAN text test belongs entirely to the two Rust clients: they
+use an explicitly exchanged/reachable LAN address, authenticate the peer
+using the client identity/pairing flow, and exchange the encrypted
+application payload over their direct transport. The Elixir service, its
+SQLite Repo, and the local `ws://127.0.0.1:3707/ws` diagnostic handshake are
+not prerequisites or participants in this test. That WebSocket handshake
+identifies a local diagnostic service role; it is not peer authentication,
+an invitation, a rendezvous protocol, or a message route.
+
+This boundary follows the source architecture: it assigns direct peer data
+transport to Rust (`iroh` on pages 6, 9, and 10), while the Elixir WebSocket
+gateway is a separate client-to-server path (pages 8 and 11). The backend may
+later support server-mediated delivery or a participant-operated relay when
+a feature needs one, but those paths are not implemented and must not be
+claimed as part of the direct-LAN milestone. See the
+[source transcript](sources/README.md) and
+[technology plan](tech-stack.md).
+
 ## Deployment assumption
 
 The service can be operated by a member or crew on a PC or VPS; no
