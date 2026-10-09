@@ -5,7 +5,8 @@ config :slouching_server, start_server: config_env() != :test
 config :slouching_server,
   ecto_repos: [SlouchingServer.Repo],
   repo_module: SlouchingServer.Repo,
-  start_repo: true
+  start_repo: true,
+  server_port: 3707
 
 config :slouching_server, SlouchingServer.Repo,
   database: Path.expand("../priv/repo/slouching_dev.sqlite3", __DIR__),

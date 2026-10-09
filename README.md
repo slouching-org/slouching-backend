@@ -38,6 +38,12 @@ database tasks. Local development uses SQLite at
 does not need a PostgreSQL service. Run `mix ecto.migrate` after new migrations.
 This database belongs to the optional Elixir helper and is not a per-user
 desktop-client database; peer-first operation does not require that helper.
+Run `server/scripts/smoke-local-sqlite.sh` to verify setup and the local HTTP
+status endpoints against an isolated temporary SQLite database. It unsets
+`SLOUCHING_DATABASE_URL`, selects an available loopback port, and removes the
+database and server process on exit. `SLOUCHING_SQLITE_PATH` and
+`SLOUCHING_PORT` are optional local overrides for the database file and HTTP
+port.
 
 To choose PostgreSQL for a deployment, set `SLOUCHING_DATABASE_URL` to a
 PostgreSQL URL and optionally `SLOUCHING_DATABASE_POOL_SIZE` (default `5`),

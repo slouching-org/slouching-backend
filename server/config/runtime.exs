@@ -1,5 +1,12 @@
 import Config
 
+config :slouching_server,
+  server_port: String.to_integer(System.get_env("SLOUCHING_PORT", "3707"))
+
+if sqlite_path = System.get_env("SLOUCHING_SQLITE_PATH") do
+  config :slouching_server, SlouchingServer.Repo, database: Path.expand(sqlite_path)
+end
+
 if database_url = System.get_env("SLOUCHING_DATABASE_URL") do
   config :slouching_server,
     ecto_repos: [SlouchingServer.PostgresRepo],

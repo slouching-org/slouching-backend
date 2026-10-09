@@ -11,7 +11,12 @@ defmodule SlouchingServer.Application do
 
     children =
       if Application.get_env(:slouching_server, :start_server, true) do
-        [{Bandit, plug: SlouchingServer.Router, ip: {127, 0, 0, 1}, port: 3707}]
+        [
+          {Bandit,
+           plug: SlouchingServer.Router,
+           ip: {127, 0, 0, 1},
+           port: Application.fetch_env!(:slouching_server, :server_port)}
+        ]
       else
         []
       end
