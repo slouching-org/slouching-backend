@@ -1,4 +1,5 @@
 /target/
 /server/_build/
 /server/deps/
+/server/priv/repo/*.sqlite3*
 *.swp

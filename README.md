@@ -15,18 +15,36 @@ authenticated WebSocket gateway, P2P transport, or calls. The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 
-The first directory storage increment adds an optional PostgreSQL/Ecto repo,
-the `devices` table, and a 32-byte public signing key constraint. It exposes
-no enrollment endpoint and does not authenticate or authorize any device.
+The first directory storage increment adds an optional SQLite/Ecto repo for
+local development, the `devices` table, and a 32-byte public signing key
+constraint. PostgreSQL remains available for a deployment that chooses to run
+the optional helper. This schema exposes no enrollment endpoint and does not
+authenticate or authorize any device.
 
 ## Run the Elixir scaffold
 
 ```sh
 cd server
 mix deps.get
+mix ecto.create
+mix ecto.migrate
 mix test
 mix run --no-halt
 ```
+
+For a fresh checkout, `mix setup` runs dependency setup and the two Ecto
+database tasks. Local development uses SQLite at
+`server/priv/repo/slouching_dev.sqlite3`; it creates the file on first use and
+does not need a PostgreSQL service. Run `mix ecto.migrate` after new migrations.
+This database belongs to the optional Elixir helper and is not a per-user
+desktop-client database; peer-first operation does not require that helper.
+
+To choose PostgreSQL for a deployment, set `SLOUCHING_DATABASE_URL` to a
+PostgreSQL URL and optionally `SLOUCHING_DATABASE_POOL_SIZE` (default `5`),
+then run `MIX_ENV=prod mix ecto.create` and `MIX_ENV=prod mix ecto.migrate`
+with the same environment before starting the service. When the URL is absent,
+the runtime selects the local SQLite Repo. The PostgreSQL Repo is a deployment
+option and is not started or contacted in the default local configuration.
 
 In another terminal:
 
@@ -46,12 +64,9 @@ WebSocket smoke test kept the connection alive for 16.4 seconds with four
 Pings and observed Pong for each. `peer/` also binds port
 3707 when run, so only start one scaffold at a time.
 
-For local directory storage, set `SLOUCHING_DATABASE_URL` to a PostgreSQL
-connection URL, then run `mix ecto.create` and `mix ecto.migrate` in `server/`.
-The service starts the Repo only when that variable is set. Without it, the
-existing local transport scaffold still runs. See the
-[device directory boundary](docs/fichas/identity/device-directory.md) before
-adding enrollment or lookup routes.
+The service starts the SQLite Repo by default after setup, or the PostgreSQL
+Repo when configured as above. The [device directory boundary](docs/fichas/identity/device-directory.md)
+still applies before adding enrollment or lookup routes.
 
 ## Repository layout
 

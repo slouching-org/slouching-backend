@@ -6,7 +6,7 @@ defmodule SlouchingServer.Application do
   def start(_type, _args) do
     repo_children =
       if Application.get_env(:slouching_server, :start_repo, false),
-        do: [SlouchingServer.Repo],
+        do: [Application.fetch_env!(:slouching_server, :repo_module)],
         else: []
 
     children =
