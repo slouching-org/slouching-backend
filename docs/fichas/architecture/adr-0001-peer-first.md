@@ -1,5 +1,9 @@
 # ADR 0001 — Núcleo em cada dispositivo
 
+> **Parcialmente substituída pela [ADR 0005](adr-0005-elixir-server-core.md):**
+> a remoção do papel do servidor Elixir não é mais a arquitetura vigente.
+> Os objetivos de comunicação direta entre peers exigem reconciliação separada.
+
 **Estado:** aceita pelo dono do produto em 2026-10-07.
 
 ## Contexto

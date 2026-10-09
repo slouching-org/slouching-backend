@@ -1,2 +1,4 @@
 /target/
+/server/_build/
+/server/deps/
 *.swp

@@ -1,5 +1,10 @@
 # ADR 0004 — Separate frontend and backend repositories
 
+> **Stack correction:** [ADR 0005](adr-0005-elixir-server-core.md) retains
+> repository separation but restores Elixir as the server backend. References
+> below to a Rust peer backend or Rust-library UI/backend boundary are
+> historical.
+
 **Status:** accepted by the owner on 2026-10-08.
 
 ## Context

@@ -1,5 +1,11 @@
 # Slouching peer-first backend specification
 
+> **Historical draft:** ADR 0005 restores the Elixir server core from the
+> owner's source PDF. This Rust-only backend specification predates that
+> correction. Do not implement its server-role removal as current architecture.
+> See [ADR 0005](adr-0005-elixir-server-core.md) and the
+> [technology plan](tech-stack.md).
+
 **Status:** architecture proposal; only a local scaffold and commit-chain policy gate are implemented
 **Revision:** 0.3, 2026-10-07
 **Requirement clarified by the project owner:** friends run Slouching on their own connected computers, over local Wi-Fi or the internet, without depending on a third-party Slouching server. A friend may optionally run a helper for their group.

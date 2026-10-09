@@ -13,11 +13,9 @@ future vector indexing:
 [07](page-07.md) · [08](page-08.md) · [09](page-09.md) ·
 [10](page-10.md) · [11](page-11.md).
 
-This PDF is a **source**, not the current accepted architecture. Its
-Rust/Iced client direction is retained. Its mandatory central
-Elixir/PostgreSQL server was superseded by
-[ADR 0001](../adr-0001-peer-first.md) after the owner clarified the
-peer-owned model. Library names in the PDF are candidates and need
-feasibility and maintenance review. See the
-[current architecture](../backend.md) and the
-[technology decision](../tech-stack.md).
+This PDF is the source architecture. Its Rust/Iced client and Elixir backend
+division is retained by [ADR 0005](../adr-0005-elixir-server-core.md). A
+member-operated deployment can meet the owner's no-third-party requirement;
+the detailed offline and direct-route behavior still needs review. Library
+names in the PDF are candidates and need feasibility and maintenance review.
+See the [technology plan](../tech-stack.md).

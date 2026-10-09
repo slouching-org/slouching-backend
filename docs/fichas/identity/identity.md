@@ -1,5 +1,7 @@
 # Identidade local
 
+> **Architecture note:** This ficha predates [ADR 0005](../architecture/adr-0005-elixir-server-core.md). Its Rust-only backend or optional-helper assumptions are historical; reconcile behavior with the source PDF and current Elixir service boundary before implementation.
+
 **Estado:** especificada; não implementada.
 
 O dispositivo criará sua própria identidade de assinatura e folha MLS. Não há

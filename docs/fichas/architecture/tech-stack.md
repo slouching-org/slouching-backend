@@ -1,32 +1,23 @@
 # Technology stack and maturity
 
-**Status:** explicit architecture plan; implementation is still a scaffold.
-Read the [complete source PDF](sources/README.md) alongside the decisions
-below. The PDF's library list says it was written from memory, so dependency
-choices are candidates until feasibility and security review.
+**Status:** source-aligned architecture direction with a minimal Elixir
+server scaffold. See [ADR 0005](adr-0005-elixir-server-core.md) and the
+[owner's source PDF](sources/README.md).
 
-| Layer | Planned technology | Decision / current state |
+| Layer | Direction | Current state |
 | --- | --- | --- |
-| Desktop UI | **Rust + Iced**, with wgpu for rendering | Retained from the source PDF; [ADR 0003](adr-0003-rust-iced-client.md). The frontend repo now has a native scaffold; the JS design prototype is isolated under `prototypes/web/`. |
-| Peer core and runtime | **Rust + Tokio** | Chosen. The current `peer/` crate has only a commit-chain policy gate and loopback status process. |
-| Peer data transport | QUIC, with **iroh** as a candidate | Planned. Direct routes first; any relay must be explicitly crew-authorized. Library/version not yet selected. |
-| Group cryptography | MLS, with **OpenMLS** as a candidate | Planned. No working MLS, credential validation, key storage, or recovery today. |
-| Media protection | **SFrame** keys derived from a separate call MLS group | Planned; implementation and threat review pending. |
-| Calls | WebRTC sans-IO, **str0m** candidate | Planned. Capture/codec dependencies in the PDF are candidates, not approved versions. |
-| Local state | Encrypted SQLite / SQLCipher candidate plus OS key store | Planned. No persistent identity, message database, or SQLCipher integration today. |
-| Optional helper | Headless member-operated peer, PC or VPS | Chosen role, not built. A protocol-compatible Elixir implementation remains possible later, never required for normal operation. |
-| Central Elixir/PostgreSQL service | Mandatory in original PDF | **Superseded** by [ADR 0001](adr-0001-peer-first.md). Do not add it as a startup dependency. |
-| Frontend/backend boundary | Rust library API preferred; versioned contract to be specified | Current `GET /api/status` is a diagnostic endpoint only. It is not a safe production IPC or the intended chat/call API. |
+| Desktop UI and client core | Rust/Iced and Tokio | Native frontend in separate repository; local HTTP status and protobuf WebSocket handshake only. |
+| Client cryptography and P2P | Rust; OpenMLS, iroh, SFrame candidates | Not implemented. PDF dependency list is provisional. |
+| Server core | Elixir/OTP, supervised processes | `server/` Mix app with Bandit, development status, and local WebSocket transport session. |
+| Gateway | Binary WebSocket with shared protobuf schema | Bandit/WebSock handshake v1 and control Ping/Pong only; no authenticated session or application traffic. |
+| Delivery and group ordering | Elixir processes, Ecto/PostgreSQL/Oban candidate | Not implemented; no queue, ACK, ordering, or durable state. |
+| Group media | Elixir `ex_webrtc` candidate | Not implemented. |
+| Relay | Member-operated TURN/iroh relay candidate | Not implemented. |
+| Historic Rust `peer/` crate | Prior peer-first scaffold | Preserved for review, not the approved Elixir server core. |
 
-The target installed application runs the UI and peer core on each
-participant's computer. Splitting source into
-`slouching-frontend` and `slouching-backend` does **not** turn the backend
-into a third-party server. The preferred packaging path is a desktop binary
-that links a version-pinned Rust core library from the backend repository.
-This requires a reviewed public Rust API, version compatibility checks, and
-build/release plumbing before implementation. The current two-process
-HTTP preview is not that architecture.
-
-See [ADR 0002](../groups/adr-0002-designated-committer.md) for MLS commit
-ordering and [ADR 0004](adr-0004-separate-repositories.md) for repository
-ownership.
+The source PDF describes a Rust client that connects directly to peers when
+possible and an Elixir server for offline delivery, MLS ordering, group SFU,
+and relay support. Deployment may be self-hosted by a member; availability
+depends on the services actually deployed and reachable. The current code
+has none of those production functions. See the [status and handshake contract](local-status-api.md)
+for the working development integration surface.

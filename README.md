@@ -1,44 +1,56 @@
 # Slouching backend
 
-This is the standalone Rust backend workspace for Slouching's peer-first
-architecture. Each friend's device is intended to own its keys, MLS state,
-encrypted local history, and outgoing queue. A crew-owned helper may later
-assist with rendezvous, ciphertext delivery, or media relay; it is optional.
+The current architecture assigns the server core to **Elixir/OTP** and the
+desktop client to **Rust/Iced**. The [owner's architecture PDF](docs/fichas/architecture/sources/architecture-p2p-v0.1.pdf)
+describes direct peer communication where possible and Elixir services for
+offline delivery, MLS ordering, group calls, and relay support. A member may
+self-host those services. [ADR 0005](docs/fichas/architecture/adr-0005-elixir-server-core.md)
+records the correction from the earlier Rust-only backend interpretation.
 
-The planned product client is **Rust/Iced**, not the temporary JavaScript
-visual preview. The owner's [complete architecture PDF](docs/fichas/architecture/sources/architecture-p2p-v0.1.pdf)
-and its [page-by-page transcript](docs/fichas/architecture/sources/README.md)
-are preserved here. [Technology stack](docs/fichas/architecture/tech-stack.md)
-and [ADRs](docs/fichas/README.md) distinguish the decisions retained from
-that PDF from the central-server design later superseded by peer-first.
+**Current state:** `server/` is a minimal Elixir Mix application with a
+supervised Bandit HTTP diagnostic and a persistent local WebSocket transport
+session after a protobuf v1 handshake. Control Ping/Pong frames keep the
+transport alive. It has no identity, MLS, messaging, persistence,
+authenticated WebSocket gateway, P2P transport, or calls. The
+existing `peer/` Rust crate is preserved as a historical scaffold and is
+not the approved server core.
 
-**Current status:** an early local scaffold, not a secure messaging backend.
-The process exposes a loopback-only status API and a pure policy gate for
-**already verified** MLS commit envelopes. It does not perform MLS,
-cryptography, persistence, peer transport, or calls.
-
-## Run
+## Run the Elixir scaffold
 
 ```sh
-cargo test --workspace
-cargo run -p slouching-peer
+cd server
+mix deps.get
+mix test
+mix run --no-halt
+```
+
+In another terminal:
+
+```sh
 curl http://127.0.0.1:3707/health
 curl http://127.0.0.1:3707/api/status
 ```
 
-The server binds to `127.0.0.1:3707`. It does not serve the frontend or
-expose a public listener. The separate frontend lives in
-[`slouching-org/slouching-frontend`](https://github.com/slouching-org/slouching-frontend).
-Cross-repository integration is a future protocol contract; the static
-frontend preview currently reports the core as unavailable.
+The [versioned status response](docs/fichas/architecture/local-status-api.md)
+reports only process availability and unavailable capabilities. The native
+Rust/Iced client can use the binary protobuf `ws://127.0.0.1:3707/ws`
+handshake. It checks protocol version and reports unavailable features, then
+stays open while the client sends WebSocket Ping frames every 5 seconds. The
+server closes an idle session after 15 seconds without Ping. This is only
+transport reachability; application traffic is still unimplemented. A real
+WebSocket smoke test kept the connection alive for 16.4 seconds with four
+Pings and observed Pong for each. `peer/` also binds port
+3707 when run, so only start one scaffold at a time.
 
-## Structure
+## Repository layout
 
 ```text
-peer/                 Rust peer core and local status process
-docs/fichas/          architecture, identity, groups, delivery, transport, media
+server/              Elixir/OTP server scaffold and loopback status
+proto/               Shared v1 protobuf handshake schema
+peer/                Preserved Rust peer-first experiment
+docs/fichas/         Source notes, architecture decisions, domain plans
 ```
 
-Read the [fichas index](docs/fichas/README.md), the
-[backend architecture](docs/fichas/architecture/backend.md), and the
-[designated-committer ADR](docs/fichas/groups/adr-0002-designated-committer.md).
+See the [technology plan](docs/fichas/architecture/tech-stack.md) and
+[fichas index](docs/fichas/README.md). Documents based on ADR 0001's removal
+of the Elixir server need reconciliation before implementation.

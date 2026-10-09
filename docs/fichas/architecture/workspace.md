@@ -1,25 +1,21 @@
-# Standalone backend workspace
+# Backend repository layout
 
-**Status:** initial repository layout implemented.
+**Status:** Elixir service scaffold implemented; product domains are planned.
 
 ```text
 slouching-backend/
-  Cargo.toml
-  Cargo.lock
-  peer/
-    Cargo.toml
-    src/
-      lib.rs       # policy gate for already verified commit envelopes
-      main.rs      # loopback-only health and status API
-  docs/fichas/     # domain notes and ADRs
+  server/              # Elixir/OTP Mix application and loopback status
+  peer/                # preserved Rust peer-first experiment
+  docs/fichas/         # source PDF, architecture decisions, domain notes
 ```
 
-The frontend is a separate repository, `slouching-org/slouching-frontend`.
-The backend does not serve its files. The current process is neither a
-mandatory central server nor a peer network implementation; it only runs
-locally and reports missing capabilities accurately.
+The frontend is a separate Rust/Iced repository,
+`slouching-org/slouching-frontend`. The Elixir service currently exposes
+`/health`, versioned `/api/status`, and a persistent development WebSocket
+transport after a binary protobuf handshake at `/ws` on `127.0.0.1:3707`; it has no authenticated gateway,
+database, delivery, identity, media, or peer transport. The old Rust `peer/`
+crate can also bind port 3707, so do not run both scaffolds together.
 
-Future crates may separate identity, encrypted storage, MLS adapters,
-authenticated transport, replication, files, and call signaling. Those
-modules must have reviewed contracts and tests before being presented as
-implemented features.
+The planned server domains are described in the [Elixir backend boundary](elixir-backend.md)
+and [ADR 0005](adr-0005-elixir-server-core.md). Code and release compatibility
+between the two repositories remain to be specified for product traffic.

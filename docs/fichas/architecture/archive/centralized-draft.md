@@ -1,6 +1,9 @@
-# Slouching centralized backend draft (superseded)
+# Slouching original Elixir backend draft (historical)
 
-> Historical draft. The project owner clarified that connected friends must be able to use Slouching without a third-party server. The active architecture is [the peer-first specification](../backend.md). This draft is retained only to record the earlier interpretation of the source PDF.
+> Historical draft based on the source PDF. The active stack direction is
+> [Elixir backend with a Rust client](../adr-0005-elixir-server-core.md), with
+> member-operated deployment permitted. This draft contains proposals that
+> still require review and does not describe implemented service features.
 
 **Status:** proposed architecture, implementation not started
 **Revision:** 0.1, 2026-10-07

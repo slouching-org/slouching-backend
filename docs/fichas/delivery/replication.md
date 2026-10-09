@@ -1,5 +1,7 @@
 # Entrega e réplicas
 
+> **Architecture note:** This ficha predates [ADR 0005](../architecture/adr-0005-elixir-server-core.md). Its Rust-only backend or optional-helper assumptions are historical; reconcile behavior with the source PDF and current Elixir service boundary before implementation.
+
 **Estado:** especificada; não implementada.
 
 Cada app manterá outbox e inbox locais persistentes, IDs estáveis de evento,
