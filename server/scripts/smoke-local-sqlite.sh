@@ -20,14 +20,14 @@ database_path="${temp_dir}/smoke.sqlite3"
 port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
 cd "${server_root}"
-env -u SLOUCHING_DATABASE_URL \
+env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
   SLOUCHING_SQLITE_PATH="${database_path}" \
   mix ecto.create
-env -u SLOUCHING_DATABASE_URL \
+env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
   SLOUCHING_SQLITE_PATH="${database_path}" \
   mix ecto.migrate
 
-(exec env -u SLOUCHING_DATABASE_URL \
+(exec env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
   SLOUCHING_SQLITE_PATH="${database_path}" \
   SLOUCHING_PORT="${port}" \
   mix run --no-halt) >"${temp_dir}/server.log" 2>&1 &
