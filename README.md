@@ -27,10 +27,15 @@ participant limit and remaining work are tracked in [the calls ficha](docs/ficha
 The existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 
-`ex_webrtc` 0.17.0 is pinned as the Elixir SFU runtime. An internal RTP
-forwarder now routes opaque packets to per-source tracks and drops routes when
-a participant's peer connection exits. It has focused tests, but is not yet
-connected to SFU rooms, call admission, signaling, or a Rust client route.
+`ex_webrtc` 0.17.0 is pinned as the Elixir SFU runtime. Internal call
+components now answer one offer per admitted peer, negotiate one outbound
+audio track per remote source, forward opaque RTP, and relay bounded binary
+messages on the reliable `slouching-call-v1` DataChannel. `ex_sctp` enables
+DataChannels and compiles a Rust NIF, so a Rust toolchain is required to build
+the backend. The components have local negotiation and forwarding tests; they
+are not connected to authenticated call routes, MLS-derived room admission,
+network signaling, or a Rust SFU client. The usable client call remains direct
+between two devices.
 
 From the project root, run `./scripts/smoke-pairing-e2e.sh` to exercise
 two Rust client roles against a live local Elixir helper. The test validates

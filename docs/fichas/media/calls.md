@@ -18,14 +18,15 @@ permissões reais e caminhos VPN. O cliente mantém uma única sessão WebRTC at
 por dispositivo; chamadas de três ou mais participantes ainda não estão
 implementadas.
 
-**Responsabilidade Elixir:** `ex_webrtc` 0.17.0 está travado no backend e há
-um encaminhador RTP interno que distribui pacotes opacos às tracks de saída
-negociadas por origem. Ele remove um peer connection quando o processo termina
-e não decifra SFrame. Ainda faltam o coordenador de sala, admissão verificável
-por MLS, sinalização autenticada, negociação de várias tracks no cliente e
-transição de topologia. O encaminhador não está exposto por uma rota e não
-habilita chamadas em grupo. O relay de texto/Iroh não é um relay de mídia
-WebRTC.
+**Responsabilidade Elixir:** `ex_webrtc` 0.17.0 está travado no backend. Há
+componentes internos para responder ofertas WebRTC, negociar uma track de
+áudio por membro remoto, encaminhar RTP opaco e repassar mensagens binárias
+limitadas pelo DataChannel confiável `slouching-call-v1`. Eles removem o peer
+quando a conexão termina e não decifram SFrame. Ainda faltam coordenador de
+sala, admissão derivada e verificável pelo estado MLS, sinalização autenticada,
+rota de chamada, modo SFU no cliente e transição de topologia. Esses
+componentes não habilitam chamadas em grupo nem entre redes diferentes. O
+relay de texto/Iroh não é um relay de mídia WebRTC.
 
 Também não estão implementados cancelamento de eco, supressão de ruído,
 controle automático de ganho, TURN nem limites de capacidade medidos para mesh

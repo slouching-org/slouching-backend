@@ -1,3 +1,4 @@
 [workspace]
 members = ["peer"]
+exclude = ["server/deps/ex_sctp/native/ex_sctp"]
 resolver = "2"

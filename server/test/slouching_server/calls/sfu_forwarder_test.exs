@@ -17,6 +17,11 @@ defmodule SlouchingServer.Calls.SfuForwarderTest do
       {:noreply, owner}
     end
 
+    def handle_cast({:send_data, channel_ref, :binary, data}, owner) do
+      send(owner, {:forwarded_data, channel_ref, data})
+      {:noreply, owner}
+    end
+
     def handle_cast(_message, owner), do: {:noreply, owner}
   end
 
@@ -140,6 +145,42 @@ defmodule SlouchingServer.Calls.SfuForwarderTest do
     packet = ExRTP.Packet.new(<<0x53, 0x46, 0x52, 0x41, 0x4D, 0x45, 7>>)
     assert :ok = SfuForwarder.forward(room, source_key, :audio, 4, packet)
     assert_receive {:forwarded_rtp, 3, ^packet}
+  end
+
+  test "forwards bounded opaque DataChannel messages to other open participants" do
+    {:ok, room} = SfuForwarder.start_link([])
+    source_key = :binary.copy(<<13>>, 32)
+    subscriber_key = :binary.copy(<<14>>, 32)
+    {:ok, source_pc} = CapturePeer.start_link(self())
+    {:ok, subscriber_pc} = CapturePeer.start_link(self())
+    source_channel = make_ref()
+    subscriber_channel = make_ref()
+    assert :ok = SfuForwarder.add_participant(room, source_key, source_pc, %{})
+
+    assert :ok =
+             SfuForwarder.add_participant(room, subscriber_key, subscriber_pc, %{
+               source_key => %{audio: 1}
+             })
+
+    assert :ok = SfuForwarder.register_data_channel(room, source_key, source_channel)
+    assert :ok = SfuForwarder.register_data_channel(room, subscriber_key, subscriber_channel)
+    payload = <<"SFrame call payload", 0, 255>>
+
+    assert :ok = SfuForwarder.forward_data(room, source_key, source_channel, payload)
+    assert_receive {:forwarded_data, ^subscriber_channel, ^payload}
+    refute_receive {:forwarded_data, ^source_channel, _payload}
+
+    assert {:error, :invalid_data_channel_message} =
+             SfuForwarder.forward_data(
+               room,
+               source_key,
+               source_channel,
+               :binary.copy(<<1>>, 16 * 1024 + 1)
+             )
+
+    assert :ok = SfuForwarder.unregister_data_channel(room, subscriber_key, subscriber_channel)
+    assert :ok = SfuForwarder.forward_data(room, source_key, source_channel, payload)
+    refute_receive {:forwarded_data, _channel_ref, _payload}
   end
 
   test "removes a participant when its peer connection exits" do

@@ -29,6 +29,7 @@ defmodule SlouchingServer.MixProject do
       {:postgrex, "~> 0.21"},
       {:protobuf, "~> 0.17"},
       {:ex_webrtc, "~> 0.17.0"},
+      {:ex_sctp, "~> 0.1.3"},
       {:websock_adapter, "~> 0.6"}
     ]
   end
