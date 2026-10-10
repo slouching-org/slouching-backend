@@ -11,6 +11,7 @@ defmodule SlouchingServer.Calls.SfuPeer do
   alias SlouchingServer.Calls.{SfuForwarder, SfuNegotiation}
 
   @offer_timeout 15_000
+  @max_ice_port_span 4_095
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
@@ -28,8 +29,11 @@ defmodule SlouchingServer.Calls.SfuPeer do
          {:ok, source_keys} <- fetch_source_keys(opts),
          forwarder when not is_nil(forwarder) <- Keyword.get(opts, :forwarder),
          signaling_owner when is_pid(signaling_owner) <- Keyword.get(opts, :signaling_owner),
+         {:ok, ice_options} <- sfu_ice_options(),
          {:ok, peer_connection} <-
-           PeerConnection.start_link(Keyword.get(opts, :peer_connection_options, [])) do
+           PeerConnection.start_link(
+             Keyword.merge(Keyword.get(opts, :peer_connection_options, []), ice_options)
+           ) do
       monitor = Process.monitor(peer_connection)
 
       {:ok,
@@ -248,4 +252,69 @@ defmodule SlouchingServer.Calls.SfuPeer do
        do: true
 
   defp valid_call_data_channel?(_channel), do: false
+
+  defp sfu_ice_options do
+    public_ip = System.get_env("SLOUCHING_SFU_PUBLIC_IP")
+    port_range = System.get_env("SLOUCHING_SFU_UDP_PORT_RANGE")
+    ice_options(public_ip, port_range)
+  end
+
+  @doc false
+  def ice_options(public_ip, port_range) do
+    with {:ok, public_ip} <- parse_public_ip(public_ip),
+         {:ok, port_range} <- parse_udp_port_range(port_range) do
+      options =
+        if port_range do
+          [ice_port_range: port_range]
+        else
+          []
+        end
+
+      options =
+        if public_ip do
+          mapper = fn host_ip ->
+            if tuple_size(host_ip) == tuple_size(public_ip), do: public_ip, else: nil
+          end
+
+          Keyword.put(options, :host_to_srflx_ip_mapper, mapper)
+        else
+          options
+        end
+
+      {:ok, options}
+    end
+  end
+
+  defp parse_public_ip(nil), do: {:ok, nil}
+  defp parse_public_ip(""), do: {:ok, nil}
+
+  defp parse_public_ip(value) when is_binary(value) do
+    case :inet.parse_address(String.to_charlist(String.trim(value))) do
+      {:ok, address} -> {:ok, address}
+      {:error, _reason} -> {:error, :invalid_sfu_public_ip}
+    end
+  end
+
+  defp parse_udp_port_range(nil), do: {:ok, nil}
+  defp parse_udp_port_range(""), do: {:ok, nil}
+
+  defp parse_udp_port_range(value) when is_binary(value) do
+    case String.split(String.trim(value), "-", parts: 2) do
+      [first, last] ->
+        with {first, ""} <- Integer.parse(first),
+             {last, ""} <- Integer.parse(last),
+             true <-
+               first in 1..65_535 and last in first..65_535 and
+                 last - first <= @max_ice_port_span do
+          {:ok, first..last}
+        else
+          _ -> {:error, :invalid_sfu_udp_port_range}
+        end
+
+      _ ->
+        {:error, :invalid_sfu_udp_port_range}
+    end
+  end
+
+  defp parse_udp_port_range(_value), do: {:error, :invalid_sfu_udp_port_range}
 end

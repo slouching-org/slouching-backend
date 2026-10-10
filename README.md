@@ -98,6 +98,23 @@ export SLOUCHING_TLS_KEYFILE=/etc/letsencrypt/live/helper.example/privkey.pem
 mix run --no-halt
 ```
 
+For an internet-reachable SFU on a one-to-one NAT or public VPS, configure the
+public candidate address and a bounded UDP range before starting the helper:
+
+```sh
+export SLOUCHING_SFU_PUBLIC_IP=203.0.113.12
+export SLOUCHING_SFU_UDP_PORT_RANGE=50000-50100
+```
+
+Allow that UDP range through the host and cloud firewalls and, behind a
+one-to-one NAT, forward each UDP port to the same port on the helper. The
+configured public IP is advertised as a server-reflexive candidate for local
+addresses of the same family. The range accepts up to 4,096 ports. Leave both
+variables unset when the host address is directly routable and the firewall
+allows the selected ports. SFU media uses UDP; there is no TURN/TCP fallback,
+so client networks must permit outbound UDP. For remote clients, expose the
+WebSocket through HTTPS/WSS, either with these TLS settings or a TLS proxy.
+
 The same listener serves the mailbox and pairing APIs over HTTPS. For a TLS
 terminating proxy, keep Bandit bound to loopback and proxy to its HTTP port.
 The SPAKE2 rendezvous API contract and HTTP examples are in the
