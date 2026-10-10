@@ -12,11 +12,18 @@ Bandit diagnostic API, a persistent local WebSocket transport after a
 protobuf v1 handshake, and an experimental in-memory SPAKE2 rendezvous API.
 The rendezvous stores bounded exchange messages for 120 seconds and permits
 one attempt per session. It also relays opaque encrypted identity statements
-after both key confirmations. The Rust/Iced client does not call it yet and
-does not authenticate contacts. The backend still
+after both key confirmations. The Rust/Iced identity screen uses it for
+experimental SPAKE2 code pairing and validates transcript-bound signed device
+proofs. That flow does not authenticate a human or automatically trust a
+contact. The backend still
 has no authenticated messaging gateway, P2P transport, or calls. The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
+
+From the project root, run `./scripts/smoke-pairing-e2e.sh` to exercise
+two Rust client roles against a live local Elixir helper. The test validates
+the pairing protocol and mismatched-code rejection with test identities; it
+does not validate remote helper deployment or physical devices.
 
 The first directory storage increment adds an optional SQLite/Ecto repo for
 local development, the `devices` table, and a 32-byte public signing key
