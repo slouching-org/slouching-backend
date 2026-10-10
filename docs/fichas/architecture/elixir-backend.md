@@ -16,7 +16,7 @@ server responsibilities to Elixir/OTP:
 | Directory | Device public keys and MLS KeyPackages | SQLite device public-key schema for local development, with PostgreSQL deployment option; no enrollment, lookup, or KeyPackages |
 | Delivery | Commit ordering, per-device encrypted inbox, ACK and expiry | Not implemented |
 | Storage | Ecto, jobs with Oban, encrypted blob references | Optional SQLite Repo for local development, optional PostgreSQL Repo for deployment, and first migration; jobs and blobs absent |
-| Calls | Admission and SFU coordination with `ex_webrtc`; TURN/relay integration | Internal offer/answer, RTP forwarding, and bounded DataChannel components with focused tests; no authenticated call routes, MLS-derived admission, or Rust SFU client |
+| Calls | Admission and SFU coordination with `ex_webrtc`; TURN/relay integration | Internal coordinator requires matching device-signed roster statements; offer/answer, RTP forwarding, and bounded DataChannel components have focused tests. No authenticated call route, independent MLS validation, or Rust SFU client |
 | Runtime | Supervision, telemetry, and later cluster coordination | Local Elixir application scaffold only |
 
 The Rust/Iced client keeps private keys, MLS cryptography, local encrypted

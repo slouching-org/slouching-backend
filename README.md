@@ -20,10 +20,12 @@ contact. The mailbox stores only bounded signed opaque copies, enforces
 per-device quotas and expiry, and requires Ed25519 proof of possession to list
 or ACK. The Rust/Iced client now supports opt-in remote helper settings, signed
 fallback uploads, and manual fetch with local persistence before helper ACK.
-Remote deployment and cross-device runtime validation remain open. The backend has
-no product messaging routes, P2P transport, call admission, or SFU room
-coordinator. The frontend does implement a two-party direct-call slice; the
-participant limit and remaining work are tracked in [the calls ficha](docs/fichas/media/calls.md).
+Remote deployment and cross-device runtime validation remain open. The backend
+has no product messaging routes or P2P transport. Its SFU room coordinator and
+device-signed roster check are internal only; there is no authenticated call
+route or independent MLS membership verification. The frontend does implement
+a two-party direct-call slice; the participant limit and remaining work are
+tracked in [the calls ficha](docs/fichas/media/calls.md).
 The existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 
@@ -33,9 +35,12 @@ audio track per remote source, forward opaque RTP, and relay bounded binary
 messages on the reliable `slouching-call-v1` DataChannel. `ex_sctp` enables
 DataChannels and compiles a Rust NIF, so a Rust toolchain is required to build
 the backend. The components have local negotiation and forwarding tests; they
-are not connected to authenticated call routes, MLS-derived room admission,
-network signaling, or a Rust SFU client. The usable client call remains direct
-between two devices.
+are not connected to authenticated call routes or a Rust SFU client. The
+in-memory coordinator requires every roster member to sign the same call ID,
+MLS group ID, epoch, and device list; clients must derive that list from their
+local call MLS state. The coordinator does not independently verify MLS
+membership and is not exposed through the gateway yet. The usable client call
+remains direct between two devices.
 
 From the project root, run `./scripts/smoke-pairing-e2e.sh` to exercise
 two Rust client roles against a live local Elixir helper. The test validates

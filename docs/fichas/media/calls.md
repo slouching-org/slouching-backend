@@ -19,14 +19,16 @@ por dispositivo; chamadas de três ou mais participantes ainda não estão
 implementadas.
 
 **Responsabilidade Elixir:** `ex_webrtc` 0.17.0 está travado no backend. Há
-componentes internos para responder ofertas WebRTC, negociar uma track de
-áudio por membro remoto, encaminhar RTP opaco e repassar mensagens binárias
-limitadas pelo DataChannel confiável `slouching-call-v1`. Eles removem o peer
-quando a conexão termina e não decifram SFrame. Ainda faltam coordenador de
-sala, admissão derivada e verificável pelo estado MLS, sinalização autenticada,
-rota de chamada, modo SFU no cliente e transição de topologia. Esses
-componentes não habilitam chamadas em grupo nem entre redes diferentes. O
-relay de texto/Iroh não é um relay de mídia WebRTC.
+componentes internos para coordenar salas efêmeras, responder ofertas WebRTC,
+negociar uma track de áudio por membro remoto, encaminhar RTP opaco e repassar
+mensagens binárias limitadas pelo DataChannel confiável
+`slouching-call-v1`. A entrada exige que cada dispositivo assine o mesmo ID
+de chamada, grupo MLS, época e roster; os clientes precisam derivar o roster
+do estado MLS local. O coordenador não verifica MLS independentemente e ainda
+não está exposto por uma rota autenticada. Também faltam sinalização de rede,
+modo SFU no cliente e transição de topologia. Esses componentes ainda não
+habilitam chamadas em grupo nem entre redes diferentes. O relay de texto/Iroh
+não é um relay de mídia WebRTC.
 
 Também não estão implementados cancelamento de eco, supressão de ruído,
 controle automático de ganho, TURN nem limites de capacidade medidos para mesh

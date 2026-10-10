@@ -9,7 +9,10 @@ defmodule SlouchingServer.Application do
         do: [Application.fetch_env!(:slouching_server, :repo_module)],
         else: []
 
-    pairing_children = [{SlouchingServer.PairingSessions, name: SlouchingServer.PairingSessions}]
+    pairing_children = [
+      {SlouchingServer.PairingSessions, name: SlouchingServer.PairingSessions},
+      {SlouchingServer.Calls.SfuCallRooms, name: SlouchingServer.Calls.SfuCallRooms}
+    ]
 
     delivery_children =
       if Application.get_env(:slouching_server, :start_repo, false),

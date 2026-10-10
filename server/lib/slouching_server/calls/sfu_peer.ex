@@ -40,6 +40,7 @@ defmodule SlouchingServer.Calls.SfuPeer do
          signaling_owner: signaling_owner,
          peer_connection: peer_connection,
          peer_connection_monitor: monitor,
+         call_id: Keyword.get(opts, :call_id),
          active?: false,
          inbound_audio_track: nil,
          data_channel_ref: nil,
@@ -94,7 +95,11 @@ defmodule SlouchingServer.Calls.SfuPeer do
         {:ex_webrtc, peer_connection, {:ice_candidate, candidate}},
         %{peer_connection: peer_connection} = state
       ) do
-    send(state.signaling_owner, {:sfu_peer_ice_candidate, state.device_key, candidate})
+    send(
+      state.signaling_owner,
+      {:sfu_peer_ice_candidate, state.call_id, state.device_key, candidate}
+    )
+
     {:noreply, state}
   end
 
@@ -102,7 +107,10 @@ defmodule SlouchingServer.Calls.SfuPeer do
         {:ex_webrtc, peer_connection, {:connection_state_change, connection_state}},
         %{peer_connection: peer_connection} = state
       ) do
-    send(state.signaling_owner, {:sfu_peer_connection_state, state.device_key, connection_state})
+    send(
+      state.signaling_owner,
+      {:sfu_peer_connection_state, state.call_id, state.device_key, connection_state}
+    )
 
     if connection_state in [:failed, :closed] do
       {:stop, {:shutdown, {:peer_connection, connection_state}}, state}
