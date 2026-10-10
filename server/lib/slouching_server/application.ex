@@ -9,19 +9,21 @@ defmodule SlouchingServer.Application do
         do: [Application.fetch_env!(:slouching_server, :repo_module)],
         else: []
 
+    pairing_children = [{SlouchingServer.PairingSessions, name: SlouchingServer.PairingSessions}]
+
     children =
       if Application.get_env(:slouching_server, :start_server, true) do
         [
           {Bandit,
            plug: SlouchingServer.Router,
-           ip: {127, 0, 0, 1},
+           ip: Application.fetch_env!(:slouching_server, :server_ip),
            port: Application.fetch_env!(:slouching_server, :server_port)}
         ]
       else
         []
       end
 
-    Supervisor.start_link(repo_children ++ children,
+    Supervisor.start_link(repo_children ++ pairing_children ++ children,
       strategy: :one_for_one,
       name: SlouchingServer.Supervisor
     )

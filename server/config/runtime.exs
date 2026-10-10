@@ -1,6 +1,16 @@
 import Config
 
+server_ip =
+  System.get_env("SLOUCHING_BIND_IP", "127.0.0.1")
+  |> String.to_charlist()
+  |> :inet.parse_address()
+  |> case do
+    {:ok, ip} -> ip
+    {:error, reason} -> raise "invalid SLOUCHING_BIND_IP: #{inspect(reason)}"
+  end
+
 config :slouching_server,
+  server_ip: server_ip,
   server_port: String.to_integer(System.get_env("SLOUCHING_PORT", "3707"))
 
 if sqlite_path = System.get_env("SLOUCHING_SQLITE_PATH") do

@@ -6,6 +6,7 @@ config :slouching_server,
   ecto_repos: [SlouchingServer.Repo],
   repo_module: SlouchingServer.Repo,
   start_repo: true,
+  server_ip: {127, 0, 0, 1},
   server_port: 3707
 
 config :slouching_server, SlouchingServer.Repo,

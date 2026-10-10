@@ -90,3 +90,60 @@ for key, value in expected.items():
         raise SystemExit(f"Unexpected /api/status field {key}: {status.get(key)!r}")
 print("SQLite startup, migrations, /health, and /api/status passed without PostgreSQL.")
 PY
+
+python3 - "${base_url}" <<'PY'
+import base64
+import json
+import sys
+import urllib.error
+import urllib.request
+
+base_url = sys.argv[1]
+
+def request(method, path, payload=None):
+    body = None if payload is None else json.dumps(payload).encode()
+    headers = {} if body is None else {"content-type": "application/json"}
+    request = urllib.request.Request(base_url + path, data=body, headers=headers, method=method)
+    try:
+        response = urllib.request.urlopen(request, timeout=3)
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+    return response.status, response.read()
+
+status, body = request("POST", "/api/pairing-sessions")
+assert status == 201, (status, body)
+session = json.loads(body)
+session_id = session["session_id"]
+assert len(session_id) == 64
+assert session["expires_in_seconds"] == 120
+assert session["attempts_per_session"] == 1
+
+spake_messages = {
+    "inviter": base64.b64encode(bytes([0x41]) * 33).decode(),
+    "invitee": base64.b64encode(bytes([0x53]) * 33).decode(),
+}
+for role in ("inviter", "invitee"):
+    status, body = request(
+        "POST", f"/api/pairing-sessions/{session_id}/{role}/spake2",
+        {"message": spake_messages[role]},
+    )
+    assert status == 204, (status, body)
+
+for role, expected in (("inviter", spake_messages["invitee"]), ("invitee", spake_messages["inviter"])):
+    status, body = request("GET", f"/api/pairing-sessions/{session_id}/{role}/spake2")
+    assert status == 200 and json.loads(body)["message"] == expected, (status, body)
+
+for role in ("inviter", "invitee"):
+    confirmation = base64.b64encode(bytes([0x10 if role == "inviter" else 0x20]) * 32).decode()
+    status, body = request(
+        "POST", f"/api/pairing-sessions/{session_id}/{role}/confirm",
+        {"message": confirmation},
+    )
+    assert status == 204, (status, body)
+
+status, body = request("DELETE", f"/api/pairing-sessions/{session_id}")
+assert status == 204, (status, body)
+status, _body = request("GET", f"/api/pairing-sessions/{session_id}/inviter/spake2")
+assert status == 404, status
+print("SPAKE2 rendezvous HTTP create, exchange, confirmation, and cancellation passed.")
+PY
