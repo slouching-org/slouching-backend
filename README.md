@@ -20,8 +20,8 @@ contact. The mailbox stores only bounded signed opaque copies, enforces
 per-device quotas and expiry, and requires Ed25519 proof of possession to list
 or ACK. The Rust/Iced client now supports opt-in remote helper settings, signed
 fallback uploads, and manual fetch with local persistence before helper ACK.
-Remote deployment and cross-device runtime validation remain open. The backend still has
-no general messaging gateway, P2P transport, call admission, or SFU. The
+Remote deployment and cross-device runtime validation remain open. The backend has
+no product messaging routes, P2P transport, call admission, or SFU. The
 frontend does implement a two-party direct-call slice; the participant limit
 and remaining work are tracked in [the calls ficha](docs/fichas/media/calls.md). The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
@@ -31,6 +31,10 @@ From the project root, run `./scripts/smoke-pairing-e2e.sh` to exercise
 two Rust client roles against a live local Elixir helper. The test validates
 the pairing protocol and mismatched-code rejection with test identities; it
 does not validate remote helper deployment or physical devices.
+
+Run `./scripts/smoke-gateway-auth-e2e.sh` from the project root to verify the
+Ed25519 device challenge over a live WebSocket using the Rust Iroh signer and
+Elixir OTP verifier.
 
 The first directory storage increment adds an optional SQLite/Ecto repo for
 local development, the `devices` table, and a 32-byte public signing key
