@@ -9,14 +9,17 @@ records the correction from the earlier Rust-only backend interpretation.
 
 **Current state:** `server/` is an Elixir Mix application with a supervised
 Bandit diagnostic API, a persistent local WebSocket transport after a
-protobuf v1 handshake, and an experimental in-memory SPAKE2 rendezvous API.
+protobuf v1 handshake, an experimental in-memory SPAKE2 rendezvous API, and
+an optional SQLite/PostgreSQL encrypted-copy mailbox API.
 The rendezvous stores bounded exchange messages for 120 seconds and permits
 one attempt per session. It also relays opaque encrypted identity statements
 after both key confirmations. The Rust/Iced identity screen uses it for
 experimental SPAKE2 code pairing and validates transcript-bound signed device
 proofs. That flow does not authenticate a human or automatically trust a
-contact. The backend still
-has no authenticated messaging gateway, P2P transport, or calls. The
+contact. The mailbox stores only bounded signed opaque copies, enforces
+per-device quotas and expiry, and requires Ed25519 proof of possession to list
+or ACK. It is not yet integrated with the Rust client. The backend still has
+no general messaging gateway, P2P transport, or calls. The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 
@@ -92,6 +95,15 @@ confirmation message, and one encrypted identity statement from each role;
 helper limits itself to 10,000 concurrent sessions and clears state on process
 restart. This is a backend primitive, not a complete pairing flow; client
 integration remains open.
+
+The optional delivery API is documented in the
+[mailbox HTTP v1 contract](docs/fichas/delivery/mailbox-http-v1.md). Uploads
+require an author-signed delegated copy grant. Listing and ACK requests use
+short-lived, nonce-protected Ed25519 request signatures. Mailbox ACK means the
+helper removed or accepted removal of its stored copy; it does not mean the
+recipient persisted or read a message. The desktop client still needs the
+HTTP transport, opt-in settings, and truthful delivery states before this
+capability is usable in the product.
 
 The service starts the SQLite Repo by default after setup, or the PostgreSQL
 Repo when configured as above. The [device directory boundary](docs/fichas/identity/device-directory.md)

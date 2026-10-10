@@ -6,8 +6,8 @@ defmodule SlouchingServer.Router do
     parsers: [:json],
     pass: ["application/json"],
     json_decoder: Jason,
-    length: 1024,
-    read_length: 1024,
+    length: 140_000,
+    read_length: 140_000,
     read_timeout: 5_000
   )
 
@@ -79,6 +79,81 @@ defmodule SlouchingServer.Router do
     end
   end
 
+  post "/api/delivery/copies" do
+    with encoded when is_binary(encoded) <- conn.body_params["copy"],
+         {:ok, payload} <- Base.decode64(encoded),
+         true <- byte_size(payload) <= 96 * 1024 do
+      case SlouchingServer.Delivery.Mailbox.store(payload) do
+        {:ok, result} ->
+          send_json(conn, 201, %{status: to_string(result)})
+
+        {:error, :invalid_envelope} ->
+          send_error(conn, 400, "invalid_copy", "copy envelope is invalid")
+
+        {:error, :invalid_signature} ->
+          send_error(conn, 400, "invalid_copy", "copy envelope is invalid")
+
+        {:error, :event_conflict} ->
+          send_error(conn, 409, "event_conflict", "event ID already has different content")
+
+        {:error, :quota_exceeded} ->
+          send_error(conn, 409, "quota_exceeded", "recipient mailbox quota is full")
+      end
+    else
+      _ -> send_error(conn, 400, "invalid_copy", "copy must be bounded base64")
+    end
+  end
+
+  get "/api/delivery/copies" do
+    path = signed_path(conn)
+
+    with {:ok, recipient} <- authenticate_delivery(conn, "GET", path, <<>>),
+         {:ok, after_id} <- query_integer(conn, "after_id", 0),
+         {:ok, limit} <- query_integer(conn, "limit", 16) do
+      case SlouchingServer.Delivery.Mailbox.list(recipient, after_id, limit) do
+        {:ok, result} ->
+          copies =
+            Enum.map(result.copies, fn copy ->
+              %{
+                event_id: Base.encode16(copy.event_id, case: :lower),
+                expires_at_unix: copy.expires_at_unix,
+                copy: Base.encode64(copy.payload)
+              }
+            end)
+
+          send_json(conn, 200, %{copies: copies, next_after_id: result.next_after_id})
+
+        {:error, reason} ->
+          delivery_error(conn, reason)
+      end
+    else
+      {:error, :unauthorized} ->
+        send_error(conn, 401, "unauthorized", "device request signature is invalid or expired")
+
+      {:error, :invalid_cursor} ->
+        send_error(conn, 400, "invalid_cursor", "mailbox cursor is invalid")
+    end
+  end
+
+  post "/api/delivery/copies/:event_id/ack" do
+    path = conn.request_path
+
+    with {:ok, recipient} <- authenticate_delivery(conn, "POST", path, <<>>),
+         {:ok, event_id} <- decode_event_id(event_id),
+         {:ok, :ok} <- SlouchingServer.Delivery.Mailbox.acknowledge(recipient, event_id) do
+      send_resp(conn, 204, "")
+    else
+      {:error, :unauthorized} ->
+        send_error(conn, 401, "unauthorized", "device request signature is invalid or expired")
+
+      {:error, :invalid_event_id} ->
+        send_error(conn, 400, "invalid_event_id", "event ID is invalid")
+
+      {:error, reason} ->
+        delivery_error(conn, reason)
+    end
+  end
+
   get "/ws" do
     conn
     |> WebSockAdapter.upgrade(SlouchingServer.HandshakeSocket, :await_hello,
@@ -100,6 +175,50 @@ defmodule SlouchingServer.Router do
   end
 
   defp decode_message(_value), do: {:error, :invalid_encoding}
+
+  defp authenticate_delivery(conn, method, path, body) do
+    SlouchingServer.Delivery.Auth.authenticate(method, path, body, conn.req_headers)
+  end
+
+  defp signed_path(%Plug.Conn{query_string: ""} = conn), do: conn.request_path
+  defp signed_path(conn), do: conn.request_path <> "?" <> conn.query_string
+
+  defp query_integer(conn, key, default) do
+    case conn.query_params[key] do
+      nil ->
+        {:ok, default}
+
+      value ->
+        case Integer.parse(value) do
+          {integer, ""} when integer >= 0 -> {:ok, integer}
+          _ -> {:error, :invalid_cursor}
+        end
+    end
+  end
+
+  defp decode_event_id(value) when byte_size(value) == 32 do
+    case Base.decode16(value, case: :lower) do
+      {:ok, event_id} when byte_size(event_id) == 16 -> {:ok, event_id}
+      _ -> {:error, :invalid_event_id}
+    end
+  end
+
+  defp decode_event_id(_value), do: {:error, :invalid_event_id}
+
+  defp delivery_error(conn, :invalid_envelope),
+    do: send_error(conn, 400, "invalid_copy", "copy envelope is invalid")
+
+  defp delivery_error(conn, :invalid_signature),
+    do: send_error(conn, 400, "invalid_copy", "copy envelope is invalid")
+
+  defp delivery_error(conn, :event_conflict),
+    do: send_error(conn, 409, "event_conflict", "event ID already has different content")
+
+  defp delivery_error(conn, :quota_exceeded),
+    do: send_error(conn, 409, "quota_exceeded", "recipient mailbox quota is full")
+
+  defp delivery_error(conn, _reason),
+    do: send_error(conn, 500, "delivery_error", "delivery request failed")
 
   defp session_capability(conn) do
     case Plug.Conn.get_req_header(conn, "authorization") do
