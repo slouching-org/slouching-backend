@@ -21,15 +21,16 @@ per-device quotas and expiry, and requires Ed25519 proof of possession to list
 or ACK. The Rust/Iced client now supports opt-in remote helper settings, signed
 fallback uploads, and manual fetch with local persistence before helper ACK.
 Remote deployment and cross-device runtime validation remain open. The backend has
-no product messaging routes, P2P transport, call admission, or SFU. The
-frontend does implement a two-party direct-call slice; the participant limit
-and remaining work are tracked in [the calls ficha](docs/fichas/media/calls.md). The
-existing `peer/` Rust crate is preserved as a historical scaffold and is
+no product messaging routes, P2P transport, call admission, or SFU room
+coordinator. The frontend does implement a two-party direct-call slice; the
+participant limit and remaining work are tracked in [the calls ficha](docs/fichas/media/calls.md).
+The existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 
-`ex_webrtc` 0.17.0 is pinned as the planned Elixir SFU runtime and compiles in
-both the test application and packaged release. No SFU rooms, call admission,
-signaling, RTP forwarding, or Rust client route uses it yet.
+`ex_webrtc` 0.17.0 is pinned as the Elixir SFU runtime. An internal RTP
+forwarder now routes opaque packets to per-source tracks and drops routes when
+a participant's peer connection exits. It has focused tests, but is not yet
+connected to SFU rooms, call admission, signaling, or a Rust client route.
 
 From the project root, run `./scripts/smoke-pairing-e2e.sh` to exercise
 two Rust client roles against a live local Elixir helper. The test validates
