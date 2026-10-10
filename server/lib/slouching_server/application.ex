@@ -20,9 +20,14 @@ defmodule SlouchingServer.Application do
       if Application.get_env(:slouching_server, :start_server, true) do
         [
           {Bandit,
-           plug: SlouchingServer.Router,
-           ip: Application.fetch_env!(:slouching_server, :server_ip),
-           port: Application.fetch_env!(:slouching_server, :server_port)}
+           Keyword.merge(
+             [
+               plug: SlouchingServer.Router,
+               ip: Application.fetch_env!(:slouching_server, :server_ip),
+               port: Application.fetch_env!(:slouching_server, :server_port)
+             ],
+             Application.get_env(:slouching_server, :server_tls_options, [])
+           )}
         ]
       else
         []

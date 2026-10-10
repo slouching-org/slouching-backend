@@ -7,7 +7,8 @@ config :slouching_server,
   repo_module: SlouchingServer.Repo,
   start_repo: true,
   server_ip: {127, 0, 0, 1},
-  server_port: 3707
+  server_port: 3707,
+  server_tls_options: []
 
 config :slouching_server, SlouchingServer.Repo,
   database: Path.expand("../priv/repo/slouching_dev.sqlite3", __DIR__),

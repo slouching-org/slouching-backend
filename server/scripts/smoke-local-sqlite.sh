@@ -163,3 +163,64 @@ status, _body = request("GET", "/api/pairing-sessions/inviter/spake2", session_i
 assert status == 404, status
 print("SPAKE2 rendezvous HTTP create, exchange, confirmation, and cancellation passed.")
 PY
+
+kill "${server_pid}" 2>/dev/null || true
+wait "${server_pid}" 2>/dev/null || true
+server_pid=""
+
+tls_certfile="${temp_dir}/tls-cert.pem"
+tls_keyfile="${temp_dir}/tls-key.pem"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "${tls_keyfile}" -out "${tls_certfile}" \
+  -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1" \
+  >"${temp_dir}/openssl.log" 2>&1
+
+(exec env -u SLOUCHING_DATABASE_URL MIX_ENV=dev \
+  SLOUCHING_SQLITE_PATH="${database_path}" \
+  SLOUCHING_PORT="${port}" \
+  SLOUCHING_TLS_CERTFILE="${tls_certfile}" \
+  SLOUCHING_TLS_KEYFILE="${tls_keyfile}" \
+  mix run --no-halt) >"${temp_dir}/tls-server.log" 2>&1 &
+server_pid=$!
+
+tls_base_url="https://127.0.0.1:${port}"
+ready=0
+for _attempt in $(seq 1 40); do
+  if curl --fail --silent --cacert "${tls_certfile}" \
+    "${tls_base_url}/health" >"${temp_dir}/tls-health.txt"; then
+    ready=1
+    break
+  fi
+  if ! kill -0 "${server_pid}" 2>/dev/null; then
+    break
+  fi
+  sleep 0.25
+done
+
+if [[ "${ready}" != 1 ]] || [[ "$(cat "${temp_dir}/tls-health.txt")" != "ok" ]]; then
+  cat "${temp_dir}/tls-server.log" >&2
+  echo "Elixir HTTPS server did not become healthy on port ${port}." >&2
+  exit 1
+fi
+
+if curl --fail --silent --max-time 2 "http://127.0.0.1:${port}/health" \
+  >"${temp_dir}/plain-health.txt" 2>/dev/null; then
+  echo "TLS listener unexpectedly accepted a plaintext HTTP health request." >&2
+  exit 1
+fi
+
+echo "Elixir HTTPS listener passed a trusted local certificate check and rejected plaintext HTTP."
+
+if env -u SLOUCHING_DATABASE_URL -u SLOUCHING_TLS_CERTFILE -u SLOUCHING_TLS_KEYFILE \
+  MIX_ENV=dev SLOUCHING_BIND_IP=0.0.0.0 \
+  mix eval 'IO.puts("unexpected plaintext listener")' \
+  >"${temp_dir}/unsafe-bind.log" 2>&1; then
+  echo "Elixir server unexpectedly allowed a non-loopback plaintext bind." >&2
+  exit 1
+fi
+if ! grep -q 'requires TLS' "${temp_dir}/unsafe-bind.log"; then
+  cat "${temp_dir}/unsafe-bind.log" >&2
+  echo "Non-loopback bind failed for a reason other than the TLS guard." >&2
+  exit 1
+fi
+echo "Elixir server rejects non-loopback plaintext binds."

@@ -60,9 +60,19 @@ status endpoints against an isolated temporary SQLite database. It unsets
 `SLOUCHING_DATABASE_URL`, selects an available loopback port, and removes the
 database and server process on exit. `SLOUCHING_SQLITE_PATH` and
 `SLOUCHING_PORT` are optional local overrides for the database file and HTTP
-port. `SLOUCHING_BIND_IP` defaults to `127.0.0.1`; set it to an explicit
-interface address only when deploying behind a TLS endpoint. The SPAKE2
-rendezvous API contract and HTTP examples are in the
+port. `SLOUCHING_BIND_IP` defaults to `127.0.0.1`; a non-loopback bind requires
+TLS. To serve HTTPS directly, set both PEM paths:
+
+```sh
+export SLOUCHING_BIND_IP=0.0.0.0
+export SLOUCHING_TLS_CERTFILE=/etc/letsencrypt/live/helper.example/fullchain.pem
+export SLOUCHING_TLS_KEYFILE=/etc/letsencrypt/live/helper.example/privkey.pem
+mix run --no-halt
+```
+
+The same listener serves the mailbox and pairing APIs over HTTPS. For a TLS
+terminating proxy, keep Bandit bound to loopback and proxy to its HTTP port.
+The SPAKE2 rendezvous API contract and HTTP examples are in the
 [main project's pairing-rendezvous-v1.md](https://github.com/slouching-org/slouching/blob/main/docs/fichas/identity/pairing-rendezvous-v1.md).
 
 To choose PostgreSQL for a deployment, set `SLOUCHING_DATABASE_URL` to a
