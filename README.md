@@ -26,10 +26,11 @@ experimental authenticated SFU signaling route over the binary WebSocket
 gateway. Each client signs the same call ID, MLS group ID, epoch, and roster;
 the helper checks these signatures against each authenticated device key, but
 cannot independently verify MLS membership. The Rust client can use this route
-when `SLOUCHING_SFU_WS_URL` is set. Both call members currently start/join the
-same call themselves; this path is limited to two devices and has been tested
-with two software clients against a local helper. It does not prove
-cross-network connectivity or a physical-device audio call. See [the calls
+when `SLOUCHING_SFU_WS_URL` is set. Each member starts/joins the same call
+themselves; the client accepts call groups of 2–16 devices. Three software
+clients have exchanged protected audio through a local helper. Multiparty
+chat/video, cross-network connectivity, and physical-device calls remain
+unverified. See [the calls
 ficha](https://github.com/slouching-org/slouching/blob/main/docs/fichas/media/calls.md)
 for limits and test commands.
 The existing `peer/` Rust crate is preserved as a historical scaffold and is
@@ -54,7 +55,7 @@ does not validate remote helper deployment or physical devices.
 
 Run `./scripts/smoke-gateway-auth-e2e.sh` from the project root to verify the
 Ed25519 device challenge, Ping/Pong, signed SFU roster admission, WebRTC SDP
-negotiation, ICE/DTLS, and protected audio forwarded between two Rust software
+negotiation, ICE/DTLS, and protected audio forwarded between three Rust software
 clients through a live Elixir helper. This does not validate physical audio
 devices or networks outside localhost.
 
