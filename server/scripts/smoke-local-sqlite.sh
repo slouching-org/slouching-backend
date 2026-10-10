@@ -82,7 +82,7 @@ expected = {
     "contract_version": 1,
     "identity": "not_implemented",
     "messaging": "not_implemented",
-    "calls": "not_implemented",
+    "calls": "available",
     "peer_connections": 0,
 }
 for key, value in expected.items():

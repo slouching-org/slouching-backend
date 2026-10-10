@@ -21,11 +21,17 @@ per-device quotas and expiry, and requires Ed25519 proof of possession to list
 or ACK. The Rust/Iced client now supports opt-in remote helper settings, signed
 fallback uploads, and manual fetch with local persistence before helper ACK.
 Remote deployment and cross-device runtime validation remain open. The backend
-has no product messaging routes or P2P transport. Its SFU room coordinator and
-device-signed roster check are internal only; there is no authenticated call
-route or independent MLS membership verification. The frontend does implement
-a two-party direct-call slice; the participant limit and remaining work are
-tracked in [the calls ficha](docs/fichas/media/calls.md).
+has no product messaging routes or P2P transport. It now exposes an
+experimental authenticated SFU signaling route over the binary WebSocket
+gateway. Each client signs the same call ID, MLS group ID, epoch, and roster;
+the helper checks these signatures against each authenticated device key, but
+cannot independently verify MLS membership. The Rust client can use this route
+when `SLOUCHING_SFU_WS_URL` is set. Both call members currently start/join the
+same call themselves; this path is limited to two devices and has been tested
+with two software clients against a local helper. It does not prove
+cross-network connectivity or a physical-device audio call. See [the calls
+ficha](https://github.com/slouching-org/slouching/blob/main/docs/fichas/media/calls.md)
+for limits and test commands.
 The existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 
@@ -34,13 +40,12 @@ components now answer one offer per admitted peer, negotiate one outbound
 audio track per remote source, forward opaque RTP, and relay bounded binary
 messages on the reliable `slouching-call-v1` DataChannel. `ex_sctp` enables
 DataChannels and compiles a Rust NIF, so a Rust toolchain is required to build
-the backend. The components have local negotiation and forwarding tests; they
-are not connected to authenticated call routes or a Rust SFU client. The
+the backend. The components have local negotiation and forwarding tests and
+an experimental authenticated WebSocket route with Rust client integration. The
 in-memory coordinator requires every roster member to sign the same call ID,
 MLS group ID, epoch, and device list; clients must derive that list from their
 local call MLS state. The coordinator does not independently verify MLS
-membership and is not exposed through the gateway yet. The usable client call
-remains direct between two devices.
+membership. Cross-network behavior remains unverified.
 
 From the project root, run `./scripts/smoke-pairing-e2e.sh` to exercise
 two Rust client roles against a live local Elixir helper. The test validates
@@ -48,8 +53,10 @@ the pairing protocol and mismatched-code rejection with test identities; it
 does not validate remote helper deployment or physical devices.
 
 Run `./scripts/smoke-gateway-auth-e2e.sh` from the project root to verify the
-Ed25519 device challenge over a live WebSocket using the Rust Iroh signer and
-Elixir OTP verifier.
+Ed25519 device challenge, Ping/Pong, signed SFU roster admission, WebRTC SDP
+negotiation, ICE/DTLS, and protected audio forwarded between two Rust software
+clients through a live Elixir helper. This does not validate physical audio
+devices or networks outside localhost.
 
 The first directory storage increment adds an optional SQLite/Ecto repo for
 local development, the `devices` table, and a 32-byte public signing key

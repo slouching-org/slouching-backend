@@ -12,7 +12,7 @@ defmodule SlouchingServer.Status do
       backend: "elixir_scaffold",
       identity: "not_implemented",
       messaging: "not_implemented",
-      calls: "not_implemented",
+      calls: "available",
       peer_connections: 0
     }
   end

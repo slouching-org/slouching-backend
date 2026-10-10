@@ -13,8 +13,15 @@ defmodule SlouchingServer.HandshakeSocket do
     ClientFrame,
     ServerFrame,
     ServerHello,
+    SfuCallAnswer,
+    SfuCallError,
+    SfuCallJoined,
+    SfuIceCandidate,
     VersionError
   }
+
+  alias ExWebRTC.ICECandidate
+  alias SlouchingServer.Calls.SfuCallRooms
 
   @protocol_version 2
   @hello_timeout_ms 5_000
@@ -25,7 +32,14 @@ defmodule SlouchingServer.HandshakeSocket do
   @impl true
   def init(:await_hello) do
     schedule_timeout(:hello, 0, @hello_timeout_ms)
-    {:ok, %{phase: :await_hello, generation: 0}}
+
+    {:ok,
+     %{
+       phase: :await_hello,
+       generation: 0,
+       call_id: nil,
+       call_rooms: SfuCallRooms
+     }}
   end
 
   @impl true
@@ -46,7 +60,7 @@ defmodule SlouchingServer.HandshakeSocket do
                  server_role: "elixir",
                  identity_available: false,
                  messaging_available: false,
-                 calls_available: false,
+                 calls_available: true,
                  auth_nonce: nonce
                }}
           }
@@ -93,11 +107,18 @@ defmodule SlouchingServer.HandshakeSocket do
               {:authenticated,
                %Authenticated{
                  device_public_key: state.device_public_key,
-                 application_routes_available: false
+                 application_routes_available: true
                }}
           }
 
-          next_state = %{state | phase: :active, generation: state.generation + 1}
+          next_state = %{
+            state
+            | phase: :active,
+              generation: state.generation + 1,
+              call_id: nil,
+              call_rooms: SlouchingServer.Calls.SfuCallRooms
+          }
+
           schedule_timeout(:heartbeat, next_state.generation, @heartbeat_timeout_ms)
           {:push, {:binary, ServerFrame.encode(reply)}, next_state}
         else
@@ -117,8 +138,49 @@ defmodule SlouchingServer.HandshakeSocket do
   def handle_in({_payload, [opcode: :text]}, %{phase: :await_auth_proof} = state),
     do: {:stop, :invalid_authentication, {1003, "Binary frame required"}, state}
 
+  def handle_in({payload, [opcode: :binary]}, %{phase: :active, call_id: nil} = state) do
+    case ClientFrame.decode(payload) do
+      %ClientFrame{payload: {:sfu_call_join, request}} -> join_call(request, state)
+      _ -> call_error(<<>>, :join_required, state)
+    end
+  rescue
+    Protobuf.DecodeError -> {:stop, :invalid_call_frame, {1002, "Invalid protobuf"}, state}
+  end
+
+  def handle_in({payload, [opcode: :binary]}, %{phase: :active} = state) do
+    case ClientFrame.decode(payload) do
+      %ClientFrame{payload: {:sfu_call_offer, %{call_id: call_id, sdp: sdp}}}
+      when call_id == state.call_id ->
+        answer_call_offer(sdp, state)
+
+      %ClientFrame{
+        payload:
+          {:sfu_ice_candidate,
+           %{
+             call_id: call_id,
+             candidate: candidate_text,
+             sdp_mid: sdp_mid,
+             sdp_m_line_index: m_line_index,
+             username_fragment: username_fragment
+           }}
+      }
+      when call_id == state.call_id ->
+        add_call_candidate(candidate_text, sdp_mid, m_line_index, username_fragment, state)
+
+      %ClientFrame{payload: {:sfu_call_leave, %{call_id: call_id}}}
+      when call_id == state.call_id ->
+        :ok = SfuCallRooms.leave(state.call_rooms, call_id, state.device_public_key)
+        {:stop, :normal, {1000, "call left"}, %{state | call_id: nil}}
+
+      _ ->
+        call_error(state.call_id, :invalid_call_frame, state)
+    end
+  rescue
+    Protobuf.DecodeError -> {:stop, :invalid_call_frame, {1002, "Invalid protobuf"}, state}
+  end
+
   def handle_in({_payload, _opcode}, %{phase: :active} = state),
-    do: {:stop, :unsupported_data, {1003, "Application frames unavailable"}, state}
+    do: {:stop, :unsupported_data, {1003, "Binary application frames required"}, state}
 
   @impl true
   def handle_control({_payload, [opcode: :ping]}, %{phase: :active} = state) do
@@ -145,10 +207,119 @@ defmodule SlouchingServer.HandshakeSocket do
       ),
       do: {:stop, :heartbeat_timeout, {1001, "heartbeat timeout"}, state}
 
+  def handle_info(
+        {:sfu_call_ice_candidate, call_id, device_key, candidate},
+        %{phase: :active, call_id: call_id, device_public_key: device_key} = state
+      ) do
+    message = %SfuIceCandidate{
+      call_id: call_id,
+      candidate: candidate.candidate,
+      sdp_mid: candidate.sdp_mid || "",
+      sdp_m_line_index: candidate.sdp_m_line_index || 0,
+      username_fragment: candidate.username_fragment || ""
+    }
+
+    frame = %ServerFrame{payload: {:sfu_ice_candidate, message}}
+    {:push, {:binary, ServerFrame.encode(frame)}, state}
+  end
+
   def handle_info(_message, state), do: {:ok, state}
 
   @impl true
+  def terminate(_reason, %{call_id: call_id, device_public_key: device_key, call_rooms: rooms})
+      when is_binary(call_id) do
+    _ = SfuCallRooms.leave(rooms, call_id, device_key)
+    :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
   def terminate(_reason, _state), do: :ok
+
+  defp join_call(request, state) do
+    %{
+      call_id: call_id,
+      group_id: group_id,
+      epoch: epoch,
+      roster: roster,
+      roster_signature: signature
+    } = request
+
+    case SfuCallRooms.join(
+           SfuCallRooms,
+           call_id,
+           group_id,
+           epoch,
+           roster,
+           state.device_public_key,
+           signature,
+           self()
+         ) do
+      :ok ->
+        frame = %ServerFrame{
+          payload: {:sfu_call_joined, %SfuCallJoined{call_id: call_id, roster: Enum.sort(roster)}}
+        }
+
+        next_state = %{state | call_id: call_id, call_rooms: SfuCallRooms}
+        {:push, {:binary, ServerFrame.encode(frame)}, next_state}
+
+      {:error, reason} ->
+        call_error(call_id, reason, state)
+    end
+  end
+
+  defp answer_call_offer(sdp, state) when byte_size(sdp) in 1..(128 * 1024)//1 do
+    case SfuCallRooms.answer_offer(state.call_rooms, state.call_id, state.device_public_key, sdp) do
+      {:ok, answer} ->
+        message = %SfuCallAnswer{call_id: state.call_id, sdp: answer.sdp}
+        frame = %ServerFrame{payload: {:sfu_call_answer, message}}
+        {:push, {:binary, ServerFrame.encode(frame)}, state}
+
+      {:error, reason} ->
+        call_error(state.call_id, reason, state)
+    end
+  end
+
+  defp answer_call_offer(_sdp, state), do: call_error(state.call_id, :invalid_offer_size, state)
+
+  defp add_call_candidate(candidate_text, sdp_mid, m_line_index, username_fragment, state)
+       when byte_size(candidate_text) in 1..2_048 and byte_size(sdp_mid) <= 64 and
+              byte_size(username_fragment) <= 256 do
+    candidate = %ICECandidate{
+      candidate: candidate_text,
+      sdp_mid: if(sdp_mid == "", do: nil, else: sdp_mid),
+      sdp_m_line_index: m_line_index,
+      username_fragment: if(username_fragment == "", do: nil, else: username_fragment)
+    }
+
+    case SfuCallRooms.add_ice_candidate(
+           state.call_rooms,
+           state.call_id,
+           state.device_public_key,
+           candidate
+         ) do
+      :ok -> {:ok, state}
+      {:error, reason} -> call_error(state.call_id, reason, state)
+    end
+  end
+
+  defp add_call_candidate(_candidate, _mid, _index, _ufrag, state),
+    do: call_error(state.call_id, :invalid_ice_candidate, state)
+
+  defp call_error(call_id, reason, state) do
+    message = %SfuCallError{
+      call_id: call_id,
+      code: reason |> error_code() |> Atom.to_string(),
+      message: "SFU call request rejected"
+    }
+
+    frame = %ServerFrame{payload: {:sfu_call_error, message}}
+    {:push, {:binary, ServerFrame.encode(frame)}, state}
+  end
+
+  defp error_code(reason) when is_atom(reason), do: reason
+  defp error_code({:room_rejected_peer, reason}) when is_atom(reason), do: reason
+  defp error_code(_reason), do: :call_request_failed
 
   defp schedule_timeout(kind, generation, interval_ms) do
     Process.send_after(self(), {:socket_timeout, kind, generation}, interval_ms)

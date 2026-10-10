@@ -1,7 +1,21 @@
 defmodule SlouchingServer.HandshakeSocketTest do
   use ExUnit.Case, async: true
 
-  alias Slouching.V1.{AuthProof, Authenticated, ClientFrame, ClientHello, ServerFrame}
+  alias ExWebRTC.{MediaStreamTrack, PeerConnection}
+
+  alias Slouching.V1.{
+    AuthProof,
+    Authenticated,
+    ClientFrame,
+    ClientHello,
+    SfuCallAnswer,
+    SfuCallJoin,
+    SfuCallLeave,
+    SfuCallOffer,
+    SfuCallJoined,
+    ServerFrame
+  }
+
   alias SlouchingServer.HandshakeSocket
 
   test "v1 handshake challenges and authenticates possession of device key" do
@@ -21,7 +35,7 @@ defmodule SlouchingServer.HandshakeSocketTest do
     assert byte_size(hello.auth_nonce) == 32
     refute hello.identity_available
     refute hello.messaging_available
-    refute hello.calls_available
+    assert hello.calls_available
 
     signed =
       "slouching/gateway-auth/v1\0" <> <<2::unsigned-big-32>> <> public_key <> hello.auth_nonce
@@ -39,7 +53,7 @@ defmodule SlouchingServer.HandshakeSocketTest do
              ServerFrame.decode(authenticated_response)
 
     assert result.device_public_key == public_key
-    refute result.application_routes_available
+    assert result.application_routes_available
     assert authenticated.phase == :active
 
     assert {:stop, :heartbeat_timeout, {1001, "heartbeat timeout"}, ^authenticated} =
@@ -133,6 +147,80 @@ defmodule SlouchingServer.HandshakeSocketTest do
     assert :crypto.verify(:eddsa, :none, payload, signature, [public_key, :ed25519])
   end
 
+  test "authenticated socket admits a signed call roster and answers its offer" do
+    {device_key, device_secret} = :crypto.generate_key(:eddsa, :ed25519)
+    {remote_key, _remote_secret} = :crypto.generate_key(:eddsa, :ed25519)
+    call_id = :crypto.strong_rand_bytes(16)
+    group_id = :crypto.strong_rand_bytes(16)
+    roster = [device_key, remote_key]
+    initial = elem(HandshakeSocket.init(:await_hello), 1)
+    active = authenticate_device(initial, device_key, device_secret)
+    signed = SlouchingServer.Calls.SfuCallRooms.roster_payload(call_id, group_id, 4, roster)
+
+    join = %ClientFrame{
+      payload:
+        {:sfu_call_join,
+         %SfuCallJoin{
+           call_id: call_id,
+           group_id: group_id,
+           epoch: 4,
+           roster: roster,
+           roster_signature: :crypto.sign(:eddsa, :none, signed, [device_secret, :ed25519])
+         }}
+    }
+
+    assert {:push, {:binary, joined_bytes}, joined_state} =
+             HandshakeSocket.handle_in({ClientFrame.encode(join), opcode: :binary}, active)
+
+    assert %ServerFrame{payload: {:sfu_call_joined, %SfuCallJoined{call_id: ^call_id}}} =
+             ServerFrame.decode(joined_bytes)
+
+    {:ok, client} = PeerConnection.start_link(ice_servers: [])
+
+    try do
+      assert {:ok, _microphone} = PeerConnection.add_track(client, MediaStreamTrack.new(:audio))
+
+      assert {:ok, _remote_audio} =
+               PeerConnection.add_transceiver(client, :audio, direction: :recvonly)
+
+      assert {:ok, _channel} =
+               PeerConnection.create_data_channel(client, "slouching-call-v1", ordered: :ordered)
+
+      assert {:ok, offer} = PeerConnection.create_offer(client)
+      assert :ok = PeerConnection.set_local_description(client, offer)
+
+      offer_frame = %ClientFrame{
+        payload: {:sfu_call_offer, %SfuCallOffer{call_id: call_id, sdp: offer.sdp}}
+      }
+
+      assert {:push, {:binary, answer_bytes}, ^joined_state} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(offer_frame), opcode: :binary},
+                 joined_state
+               )
+
+      assert %ServerFrame{
+               payload: {:sfu_call_answer, %SfuCallAnswer{call_id: ^call_id, sdp: answer_sdp}}
+             } =
+               ServerFrame.decode(answer_bytes)
+
+      assert is_binary(answer_sdp) and byte_size(answer_sdp) > 0
+
+      leave_frame = %ClientFrame{payload: {:sfu_call_leave, %SfuCallLeave{call_id: call_id}}}
+
+      assert {:stop, :normal, {1000, "call left"}, left_state} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(leave_frame), opcode: :binary},
+                 joined_state
+               )
+
+      assert left_state.call_id == nil
+    after
+      if Process.alive?(client), do: PeerConnection.stop(client)
+      _ = SlouchingServer.Calls.SfuCallRooms.leave(call_id, device_key)
+    end
+  end
+
   defp hello(public_key, protocol_version \\ 2) do
     %ClientFrame{
       payload:
@@ -143,6 +231,10 @@ defmodule SlouchingServer.HandshakeSocketTest do
   defp authenticate(initial) do
     {public_key, private_key} = :crypto.generate_key(:eddsa, :ed25519)
 
+    authenticate_device(initial, public_key, private_key)
+  end
+
+  defp authenticate_device(initial, public_key, private_key) do
     assert {:push, {:binary, hello_response}, pending} =
              HandshakeSocket.handle_in(
                {ClientFrame.encode(hello(public_key)), opcode: :binary},
