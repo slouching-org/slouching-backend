@@ -11,6 +11,11 @@ defmodule SlouchingServer.Application do
 
     pairing_children = [{SlouchingServer.PairingSessions, name: SlouchingServer.PairingSessions}]
 
+    delivery_children =
+      if Application.get_env(:slouching_server, :start_repo, false),
+        do: [SlouchingServer.Delivery.Expiry],
+        else: []
+
     children =
       if Application.get_env(:slouching_server, :start_server, true) do
         [
@@ -23,7 +28,7 @@ defmodule SlouchingServer.Application do
         []
       end
 
-    Supervisor.start_link(repo_children ++ pairing_children ++ children,
+    Supervisor.start_link(repo_children ++ pairing_children ++ delivery_children ++ children,
       strategy: :one_for_one,
       name: SlouchingServer.Supervisor
     )

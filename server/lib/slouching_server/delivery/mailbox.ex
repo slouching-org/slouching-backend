@@ -106,6 +106,28 @@ defmodule SlouchingServer.Delivery.Mailbox do
 
   def acknowledge(_recipient, _event_id, _now), do: {:error, :invalid_event_id}
 
+  def expire_all(now \\ System.system_time(:second)) do
+    Repo.transaction(fn ->
+      expired =
+        Repo.all(
+          from(c in Copy,
+            where: c.expires_at_unix <= ^now,
+            group_by: c.recipient_device,
+            select: {c.recipient_device, sum(c.size_bytes), count(c.id)}
+          )
+        )
+
+      Repo.delete_all(from(c in Copy, where: c.expires_at_unix <= ^now))
+
+      Enum.each(expired, fn {recipient, bytes, events} ->
+        adjust_usage(recipient, -bytes, -events)
+      end)
+
+      Enum.reduce(expired, 0, fn {_recipient, _bytes, events}, total -> total + events end)
+    end)
+    |> unwrap_transaction()
+  end
+
   defp reserve_and_insert(payload, metadata) do
     size = byte_size(payload)
 

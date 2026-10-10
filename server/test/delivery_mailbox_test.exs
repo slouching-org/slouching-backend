@@ -43,4 +43,18 @@ defmodule SlouchingServer.Delivery.MailboxTest do
     assert usage.used_bytes == 0
     assert usage.event_count == 0
   end
+
+  test "periodic expiry removes copies without recipient traffic" do
+    now = 1_800_000_000
+    payload = WireTest.signed_copy_for_mailbox(now + 1)
+    {:ok, metadata} = SlouchingServer.Delivery.Wire.parse(payload, now)
+    assert {:ok, :stored} = Mailbox.store(payload, now)
+
+    assert {:ok, 1} = Mailbox.expire_all(now + 1)
+
+    assert Repo.get_by(Copy,
+             recipient_device: metadata.recipient_device,
+             event_id: metadata.event_id
+           ) == nil
+  end
 end
