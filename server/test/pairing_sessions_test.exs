@@ -3,12 +3,19 @@ defmodule SlouchingServer.PairingSessionsTest do
 
   alias SlouchingServer.{PairingSessions, Router}
 
-  defp request(method, path, body \\ nil) do
+  defp request(method, path, body \\ nil, session_id \\ nil) do
     conn = Plug.Test.conn(method, path, body || "")
 
     conn =
       if body do
         Plug.Conn.put_req_header(conn, "content-type", "application/json")
+      else
+        conn
+      end
+
+    conn =
+      if session_id do
+        Plug.Conn.put_req_header(conn, "authorization", "Bearer #{session_id}")
       else
         conn
       end
@@ -32,31 +39,31 @@ defmodule SlouchingServer.PairingSessionsTest do
     inviter_confirm = :binary.copy(<<0x11>>, 32)
     invitee_confirm = :binary.copy(<<0x22>>, 32)
 
-    assert request(
-             :get,
-             "/api/pairing-sessions/#{session_id}/inviter/spake2"
-           ).status == 202
+    assert request(:get, "/api/pairing-sessions/inviter/spake2", nil, session_id).status == 202
 
     assert request(
              :post,
-             "/api/pairing-sessions/#{session_id}/inviter/spake2",
-             Jason.encode!(%{message: Base.encode64(inviter_spake)})
+             "/api/pairing-sessions/inviter/spake2",
+             Jason.encode!(%{message: Base.encode64(inviter_spake)}),
+             session_id
            ).status == 204
 
     assert request(
              :post,
-             "/api/pairing-sessions/#{session_id}/inviter/confirm",
-             Jason.encode!(%{message: Base.encode64(inviter_confirm)})
+             "/api/pairing-sessions/inviter/confirm",
+             Jason.encode!(%{message: Base.encode64(inviter_confirm)}),
+             session_id
            ).status == 409
 
     assert request(
              :post,
-             "/api/pairing-sessions/#{session_id}/invitee/spake2",
-             Jason.encode!(%{message: Base.encode64(invitee_spake)})
+             "/api/pairing-sessions/invitee/spake2",
+             Jason.encode!(%{message: Base.encode64(invitee_spake)}),
+             session_id
            ).status == 204
 
     for {role, message} <- [{"inviter", invitee_spake}, {"invitee", inviter_spake}] do
-      response = request(:get, "/api/pairing-sessions/#{session_id}/#{role}/spake2")
+      response = request(:get, "/api/pairing-sessions/#{role}/spake2", nil, session_id)
       assert response.status == 200
       assert Jason.decode!(response.resp_body)["message"] == Base.encode64(message)
     end
@@ -64,26 +71,31 @@ defmodule SlouchingServer.PairingSessionsTest do
     for {role, message} <- [{"inviter", inviter_confirm}, {"invitee", invitee_confirm}] do
       assert request(
                :post,
-               "/api/pairing-sessions/#{session_id}/#{role}/confirm",
-               Jason.encode!(%{message: Base.encode64(message)})
+               "/api/pairing-sessions/#{role}/confirm",
+               Jason.encode!(%{message: Base.encode64(message)}),
+               session_id
              ).status == 204
     end
 
     assert request(
              :post,
-             "/api/pairing-sessions/#{session_id}/inviter/spake2",
-             Jason.encode!(%{message: Base.encode64(inviter_spake)})
+             "/api/pairing-sessions/inviter/spake2",
+             Jason.encode!(%{message: Base.encode64(inviter_spake)}),
+             session_id
            ).status == 409
+
+    assert request(:delete, "/api/pairing-sessions", nil, session_id).status == 204
   end
 
-  test "HTTP endpoint rejects malformed encoding, oversized and unknown requests" do
+  test "HTTP endpoint rejects malformed encoding, sizes, roles, stages and session capabilities" do
     {:ok, session_id} = PairingSessions.create()
 
     invalid_encoding =
       request(
         :post,
-        "/api/pairing-sessions/#{session_id}/inviter/spake2",
-        Jason.encode!(%{message: "not base64!"})
+        "/api/pairing-sessions/inviter/spake2",
+        Jason.encode!(%{message: "not base64!"}),
+        session_id
       )
 
     assert invalid_encoding.status == 400
@@ -91,17 +103,22 @@ defmodule SlouchingServer.PairingSessionsTest do
     invalid_size =
       request(
         :post,
-        "/api/pairing-sessions/#{session_id}/inviter/spake2",
-        Jason.encode!(%{message: Base.encode64("too short")})
+        "/api/pairing-sessions/inviter/spake2",
+        Jason.encode!(%{message: Base.encode64("too short")}),
+        session_id
       )
 
     assert invalid_size.status == 400
+    assert request(:get, "/api/pairing-sessions/inviter/spake2").status == 404
+    assert request(:get, "/api/pairing-sessions/unknown/spake2", nil, session_id).status == 400
+    assert request(:get, "/api/pairing-sessions/inviter/unknown", nil, session_id).status == 400
 
-    assert request(:get, "/api/pairing-sessions/#{String.duplicate("0", 64)}/inviter/spake2").status ==
-             404
-
-    assert request(:get, "/api/pairing-sessions/#{session_id}/unknown/spake2").status == 400
-    assert request(:get, "/api/pairing-sessions/#{session_id}/inviter/unknown").status == 400
+    assert request(
+             :get,
+             "/api/pairing-sessions/inviter/spake2",
+             nil,
+             String.duplicate("0", 64)
+           ).status == 404
   end
 
   test "expired sessions reject reads and writes" do

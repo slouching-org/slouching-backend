@@ -100,9 +100,11 @@ import urllib.request
 
 base_url = sys.argv[1]
 
-def request(method, path, payload=None):
+def request(method, path, payload=None, session_id=None):
     body = None if payload is None else json.dumps(payload).encode()
     headers = {} if body is None else {"content-type": "application/json"}
+    if session_id is not None:
+        headers["authorization"] = "Bearer " + session_id
     request = urllib.request.Request(base_url + path, data=body, headers=headers, method=method)
     try:
         response = urllib.request.urlopen(request, timeout=3)
@@ -124,26 +126,28 @@ spake_messages = {
 }
 for role in ("inviter", "invitee"):
     status, body = request(
-        "POST", f"/api/pairing-sessions/{session_id}/{role}/spake2",
+        "POST", f"/api/pairing-sessions/{role}/spake2",
         {"message": spake_messages[role]},
+        session_id,
     )
     assert status == 204, (status, body)
 
 for role, expected in (("inviter", spake_messages["invitee"]), ("invitee", spake_messages["inviter"])):
-    status, body = request("GET", f"/api/pairing-sessions/{session_id}/{role}/spake2")
+    status, body = request("GET", f"/api/pairing-sessions/{role}/spake2", session_id=session_id)
     assert status == 200 and json.loads(body)["message"] == expected, (status, body)
 
 for role in ("inviter", "invitee"):
     confirmation = base64.b64encode(bytes([0x10 if role == "inviter" else 0x20]) * 32).decode()
     status, body = request(
-        "POST", f"/api/pairing-sessions/{session_id}/{role}/confirm",
+        "POST", f"/api/pairing-sessions/{role}/confirm",
         {"message": confirmation},
+        session_id,
     )
     assert status == 204, (status, body)
 
-status, body = request("DELETE", f"/api/pairing-sessions/{session_id}")
+status, body = request("DELETE", "/api/pairing-sessions", session_id=session_id)
 assert status == 204, (status, body)
-status, _body = request("GET", f"/api/pairing-sessions/{session_id}/inviter/spake2")
+status, _body = request("GET", "/api/pairing-sessions/inviter/spake2", session_id=session_id)
 assert status == 404, status
 print("SPAKE2 rendezvous HTTP create, exchange, confirmation, and cancellation passed.")
 PY

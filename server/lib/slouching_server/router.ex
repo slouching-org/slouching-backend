@@ -42,8 +42,9 @@ defmodule SlouchingServer.Router do
     end
   end
 
-  post "/api/pairing-sessions/:session_id/:role/:stage" do
-    with {:ok, message} <- decode_message(conn.body_params["message"]),
+  post "/api/pairing-sessions/:role/:stage" do
+    with {:ok, session_id} <- session_capability(conn),
+         {:ok, message} <- decode_message(conn.body_params["message"]),
          :ok <-
            SlouchingServer.PairingSessions.put(
              session_id,
@@ -57,17 +58,25 @@ defmodule SlouchingServer.Router do
     end
   end
 
-  get "/api/pairing-sessions/:session_id/:role/:stage" do
-    case SlouchingServer.PairingSessions.fetch(session_id, role, stage) do
-      {:ok, message} -> send_json(conn, 200, %{message: Base.encode64(message)})
-      :error -> send_json(conn, 202, %{status: "pending"})
+  get "/api/pairing-sessions/:role/:stage" do
+    with {:ok, session_id} <- session_capability(conn) do
+      case SlouchingServer.PairingSessions.fetch(session_id, role, stage) do
+        {:ok, message} -> send_json(conn, 200, %{message: Base.encode64(message)})
+        :error -> send_json(conn, 202, %{status: "pending"})
+        {:error, reason} -> pairing_error(conn, reason)
+      end
+    else
       {:error, reason} -> pairing_error(conn, reason)
     end
   end
 
-  delete "/api/pairing-sessions/:session_id" do
-    :ok = SlouchingServer.PairingSessions.delete(session_id)
-    send_resp(conn, 204, "")
+  delete "/api/pairing-sessions" do
+    with {:ok, session_id} <- session_capability(conn) do
+      :ok = SlouchingServer.PairingSessions.delete(session_id)
+      send_resp(conn, 204, "")
+    else
+      {:error, reason} -> pairing_error(conn, reason)
+    end
   end
 
   get "/ws" do
@@ -92,7 +101,23 @@ defmodule SlouchingServer.Router do
 
   defp decode_message(_value), do: {:error, :invalid_encoding}
 
+  defp session_capability(conn) do
+    case Plug.Conn.get_req_header(conn, "authorization") do
+      ["Bearer " <> session_id]
+      when byte_size(session_id) == 64 ->
+        if Regex.match?(~r/\A[0-9a-f]{64}\z/, session_id),
+          do: {:ok, session_id},
+          else: {:error, :invalid_session}
+
+      _ ->
+        {:error, :invalid_session}
+    end
+  end
+
   defp pairing_error(conn, :not_found),
+    do: send_error(conn, 404, "not_found", "pairing session not found")
+
+  defp pairing_error(conn, :invalid_session),
     do: send_error(conn, 404, "not_found", "pairing session not found")
 
   defp pairing_error(conn, :expired),
