@@ -9,7 +9,7 @@ records the correction from the earlier Rust-only backend interpretation.
 
 **Current state:** `server/` is an Elixir Mix application with a supervised
 Bandit diagnostic API, a persistent local WebSocket transport after a
-protobuf v1 handshake, an experimental in-memory SPAKE2 rendezvous API, and
+protobuf v2 handshake, an experimental in-memory SPAKE2 rendezvous API, and
 an optional SQLite/PostgreSQL encrypted-copy mailbox API.
 The rendezvous stores bounded exchange messages for 120 seconds and permits
 one attempt per session. It also relays opaque encrypted identity statements
@@ -114,12 +114,11 @@ curl http://127.0.0.1:3707/api/status
 The [versioned status response](docs/fichas/architecture/local-status-api.md)
 reports only process availability and unavailable capabilities. The native
 Rust/Iced client can use the binary protobuf `ws://127.0.0.1:3707/ws`
-handshake. It checks protocol version and reports unavailable features, then
-stays open while the client sends WebSocket Ping frames every 5 seconds. The
-server closes an idle session after 15 seconds without Ping. This is only
-transport reachability; application traffic is still unimplemented. A real
-WebSocket smoke test kept the connection alive for 16.4 seconds with four
-Pings and observed Pong for each. `peer/` also binds port
+handshake. It checks protocol version and proves possession of the local
+Ed25519 device key using a fresh challenge, then stays open while the client
+sends WebSocket Ping frames every 5 seconds. This grants no product
+authorization and carries no application traffic. The server closes an idle
+session after 15 seconds without Ping. `peer/` also binds port
 3707 when run, so only start one scaffold at a time.
 
 The experimental `POST /api/pairing-sessions` route creates a volatile

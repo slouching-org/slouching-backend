@@ -7,6 +7,7 @@ defmodule Slouching.V1.ClientHello do
     syntax: :proto3
 
   field(:protocol_version, 1, type: :uint32, json_name: "protocolVersion")
+  field(:device_public_key, 2, type: :bytes, json_name: "devicePublicKey")
 end
 
 defmodule Slouching.V1.ServerHello do
@@ -22,6 +23,7 @@ defmodule Slouching.V1.ServerHello do
   field(:identity_available, 3, type: :bool, json_name: "identityAvailable")
   field(:messaging_available, 4, type: :bool, json_name: "messagingAvailable")
   field(:calls_available, 5, type: :bool, json_name: "callsAvailable")
+  field(:auth_nonce, 6, type: :bytes, json_name: "authNonce")
 end
 
 defmodule Slouching.V1.VersionError do
@@ -35,6 +37,29 @@ defmodule Slouching.V1.VersionError do
   field(:supported_version, 1, type: :uint32, json_name: "supportedVersion")
 end
 
+defmodule Slouching.V1.AuthProof do
+  @moduledoc false
+
+  use Protobuf,
+    full_name: "slouching.v1.AuthProof",
+    protoc_gen_elixir_version: "0.17.0",
+    syntax: :proto3
+
+  field(:signature, 1, type: :bytes)
+end
+
+defmodule Slouching.V1.Authenticated do
+  @moduledoc false
+
+  use Protobuf,
+    full_name: "slouching.v1.Authenticated",
+    protoc_gen_elixir_version: "0.17.0",
+    syntax: :proto3
+
+  field(:device_public_key, 1, type: :bytes, json_name: "devicePublicKey")
+  field(:application_routes_available, 2, type: :bool, json_name: "applicationRoutesAvailable")
+end
+
 defmodule Slouching.V1.ClientFrame do
   @moduledoc false
 
@@ -46,6 +71,7 @@ defmodule Slouching.V1.ClientFrame do
   oneof(:payload, 0)
 
   field(:hello, 1, type: Slouching.V1.ClientHello, oneof: 0)
+  field(:auth_proof, 2, type: Slouching.V1.AuthProof, json_name: "authProof", oneof: 0)
 end
 
 defmodule Slouching.V1.ServerFrame do
@@ -60,4 +86,5 @@ defmodule Slouching.V1.ServerFrame do
 
   field(:hello, 1, type: Slouching.V1.ServerHello, oneof: 0)
   field(:version_error, 2, type: Slouching.V1.VersionError, json_name: "versionError", oneof: 0)
+  field(:authenticated, 3, type: Slouching.V1.Authenticated, oneof: 0)
 end
