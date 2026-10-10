@@ -27,6 +27,10 @@ and remaining work are tracked in [the calls ficha](docs/fichas/media/calls.md).
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 
+`ex_webrtc` 0.17.0 is pinned as the planned Elixir SFU runtime and compiles in
+both the test application and packaged release. No SFU rooms, call admission,
+signaling, RTP forwarding, or Rust client route uses it yet.
+
 From the project root, run `./scripts/smoke-pairing-e2e.sh` to exercise
 two Rust client roles against a live local Elixir helper. The test validates
 the pairing protocol and mismatched-code rejection with test identities; it
