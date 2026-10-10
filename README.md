@@ -21,7 +21,9 @@ per-device quotas and expiry, and requires Ed25519 proof of possession to list
 or ACK. The Rust/Iced client now supports opt-in remote helper settings, signed
 fallback uploads, and manual fetch with local persistence before helper ACK.
 Remote deployment and cross-device runtime validation remain open. The backend still has
-no general messaging gateway, P2P transport, or calls. The
+no general messaging gateway, P2P transport, call admission, or SFU. The
+frontend does implement a two-party direct-call slice; the participant limit
+and remaining work are tracked in [the calls ficha](docs/fichas/media/calls.md). The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
 

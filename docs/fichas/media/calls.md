@@ -1,19 +1,34 @@
 # Chamadas e captura
 
-> **Architecture note:** This ficha predates [ADR 0005](../architecture/adr-0005-elixir-server-core.md). Its Rust-only backend or optional-helper assumptions are historical; reconcile behavior with the source PDF and current Elixir service boundary before implementation.
+> **Architecture note:** the source PDF assigns desktop capture, Opus, and
+> SFrame to Rust, and the optional group SFU to Elixir. [ADR 0005](../architecture/adr-0005-elixir-server-core.md)
+> preserves that language boundary.
 
-**Estado:** especificadas; não implementadas.
+**Estado atual entre os repositórios:** o cliente Rust/Iced já implementa uma
+chamada direta entre dois dispositivos. O grupo MLS dedicado protege a mídia;
+oferta e resposta WebRTC são sinalizadas pelo QUIC pinado, e a chamada recebida
+aguarda aceite explícito. O cliente captura e reproduz Opus via CPAL e protege
+os quadros com SFrame. Também há chat temporário em DataChannel, vídeo H.264
+protegido para câmera, tela ou janela, e controles de parada.
 
-Uma chamada tem grupo MLS separado contendo somente seus participantes.
-Áudio/vídeo usam chaves derivadas desse grupo; membros da conversa que não
-entraram não recebem chaves de mídia. Dois peers tentam rota direta. Mesh
-atende grupos pequenos dentro de limites medidos; SFU operado por membro é
-opcional. Captura de microfone, câmera, tela e áudio de sistema respeita
-permissões do SO.
+Os testes locais validam negociação host ICE/DTLS, áudio em loopback,
+fragmentação e decodificação de vídeo protegido e encerramento do
+compartilhamento. Ainda falta validar captura e reprodução entre máquinas,
+permissões reais e caminhos VPN. O cliente mantém uma única sessão WebRTC ativa
+por dispositivo; chamadas de três ou mais participantes ainda não estão
+implementadas.
 
-Hoje a tela de chamada no repositório de frontend usa cenas JPEG e controles
-**demonstrativos**. Não abre
-dispositivos nem conecta peers. Exibe essa limitação no cabeçalho, no rodapé
-e nos estados de ação.
+**Responsabilidade Elixir:** o serviço ainda não tem dependência `ex_webrtc`,
+admissão de participantes de chamada, sinalização autenticada para o SFU ou
+encaminhamento de RTP/SFrame. Portanto, o suporte a SFU e a transição de P2P
+para SFU especificados no PDF permanecem pendentes. O relay de texto/Iroh não
+é um relay de mídia WebRTC.
 
-Ver [spec detalhada](../architecture/backend.md#7-calls-files-and-temporary-room-chat).
+Também não estão implementados cancelamento de eco, supressão de ruído,
+controle automático de ganho, TURN nem limites de capacidade medidos para mesh
+ou SFU. A chamada de duas pessoas tem testes locais; ainda não há uma promessa
+de capacidade para chamadas em grupo. O cliente e seu estado atual estão
+descritos na [ficha de chamadas do frontend](https://github.com/slouching-org/slouching-frontend/blob/main/docs/fichas/media/calls.md).
+
+Ver a [especificação detalhada](../architecture/backend.md#7-calls-files-and-temporary-room-chat)
+e o [plano de tecnologia](../architecture/tech-stack.md).
