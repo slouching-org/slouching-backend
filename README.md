@@ -18,7 +18,9 @@ experimental SPAKE2 code pairing and validates transcript-bound signed device
 proofs. That flow does not authenticate a human or automatically trust a
 contact. The mailbox stores only bounded signed opaque copies, enforces
 per-device quotas and expiry, and requires Ed25519 proof of possession to list
-or ACK. It is not yet integrated with the Rust client. The backend still has
+or ACK. The Rust/Iced client now supports opt-in remote helper settings, signed
+fallback uploads, and manual fetch with local persistence before helper ACK.
+Remote deployment and cross-device runtime validation remain open. The backend still has
 no general messaging gateway, P2P transport, or calls. The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
@@ -101,9 +103,9 @@ The optional delivery API is documented in the
 require an author-signed delegated copy grant. Listing and ACK requests use
 short-lived, nonce-protected Ed25519 request signatures. Mailbox ACK means the
 helper removed or accepted removal of its stored copy; it does not mean the
-recipient persisted or read a message. The desktop client still needs the
-HTTP transport, opt-in settings, and truthful delivery states before this
-capability is usable in the product.
+recipient processed or read a message. The client persists a fetched MLS event
+before sending this ACK; the separate MLS/device receipt still depends on
+successful processing by the recipient.
 
 The service starts the SQLite Repo by default after setup, or the PostgreSQL
 Repo when configured as above. The [device directory boundary](docs/fichas/identity/device-directory.md)
