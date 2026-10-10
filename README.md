@@ -75,6 +75,26 @@ terminating proxy, keep Bandit bound to loopback and proxy to its HTTP port.
 The SPAKE2 rendezvous API contract and HTTP examples are in the
 [main project's pairing-rendezvous-v1.md](https://github.com/slouching-org/slouching/blob/main/docs/fichas/identity/pairing-rendezvous-v1.md).
 
+## Build and run a packaged helper
+
+The Mix release contains the optional Elixir service and its SQLite or
+PostgreSQL adapter. Create the database directory first, then build and migrate
+before starting the long-running service:
+
+```sh
+MIX_ENV=prod mix release
+export SLOUCHING_SQLITE_PATH=/var/lib/slouching/helper.sqlite3
+_build/prod/rel/slouching_server/bin/slouching_server eval 'SlouchingServer.Release.migrate()'
+_build/prod/rel/slouching_server/bin/slouching_server start
+```
+
+`start` stays in the foreground and stops cleanly on SIGTERM or Ctrl+C, so a
+service manager can supervise it. Set the TLS and bind variables in the same
+environment for a remotely reachable helper. During an upgrade, stop the
+service, install the new release, run the migration command, and start it
+again. `server/scripts/smoke-release.sh` builds a release, migrates an isolated
+SQLite database, and verifies the packaged HTTP process.
+
 To choose PostgreSQL for a deployment, set `SLOUCHING_DATABASE_URL` to a
 PostgreSQL URL and optionally `SLOUCHING_DATABASE_POOL_SIZE` (default `5`),
 then run `MIX_ENV=prod mix ecto.create` and `MIX_ENV=prod mix ecto.migrate`
@@ -105,8 +125,9 @@ two-minute rendezvous session. Its API relays one SPAKE2 message, one
 confirmation message, and one encrypted identity statement from each role;
 `GET` polls for the other role's message and `DELETE` cancels the session. The
 helper limits itself to 10,000 concurrent sessions and clears state on process
-restart. This is a backend primitive, not a complete pairing flow; client
-integration remains open.
+restart. The Rust/Iced identity screen uses this route for experimental
+SPAKE2 code pairing; physical-device use and remote deployment still need
+validation.
 
 The optional delivery API is documented in the
 [mailbox HTTP v1 contract](docs/fichas/delivery/mailbox-http-v1.md). Uploads

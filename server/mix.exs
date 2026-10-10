@@ -7,6 +7,9 @@ defmodule SlouchingServer.MixProject do
       version: "0.1.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
+      releases: [
+        slouching_server: [applications: [runtime_tools: :permanent]]
+      ],
       deps: deps(),
       aliases: aliases()
     ]
