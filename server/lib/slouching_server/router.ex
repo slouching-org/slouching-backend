@@ -92,7 +92,7 @@ defmodule SlouchingServer.Router do
     send_resp(conn, 404, "not found")
   end
 
-  defp decode_message(value) when is_binary(value) and byte_size(value) <= 128 do
+  defp decode_message(value) when is_binary(value) and byte_size(value) <= 256 do
     case Base.decode64(value) do
       {:ok, message} -> {:ok, message}
       :error -> {:error, :invalid_encoding}
@@ -128,6 +128,15 @@ defmodule SlouchingServer.Router do
 
   defp pairing_error(conn, :spake2_incomplete),
     do: send_error(conn, 409, "spake2_incomplete", "both SPAKE2 messages are required first")
+
+  defp pairing_error(conn, :confirmation_incomplete),
+    do:
+      send_error(
+        conn,
+        409,
+        "confirmation_incomplete",
+        "both key confirmations are required first"
+      )
 
   defp pairing_error(conn, :invalid_role),
     do: send_error(conn, 400, "invalid_role", "invalid participant role")

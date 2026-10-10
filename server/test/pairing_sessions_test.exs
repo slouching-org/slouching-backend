@@ -68,6 +68,13 @@ defmodule SlouchingServer.PairingSessionsTest do
       assert Jason.decode!(response.resp_body)["message"] == Base.encode64(message)
     end
 
+    assert request(
+             :post,
+             "/api/pairing-sessions/inviter/identity",
+             Jason.encode!(%{message: Base.encode64(:binary.copy(<<0x31>>, 128))}),
+             session_id
+           ).status == 409
+
     for {role, message} <- [{"inviter", inviter_confirm}, {"invitee", invitee_confirm}] do
       assert request(
                :post,
@@ -76,6 +83,23 @@ defmodule SlouchingServer.PairingSessionsTest do
                session_id
              ).status == 204
     end
+
+    inviter_identity = Base.encode64(:binary.copy(<<0x31>>, 128))
+    invitee_identity = Base.encode64(:binary.copy(<<0x32>>, 128))
+
+    for {role, message} <- [{"inviter", inviter_identity}, {"invitee", invitee_identity}] do
+      assert request(
+               :post,
+               "/api/pairing-sessions/#{role}/identity",
+               Jason.encode!(%{message: message}),
+               session_id
+             ).status == 204
+    end
+
+    assert request(:get, "/api/pairing-sessions/inviter/identity", nil, session_id)
+           |> Map.fetch!(:resp_body)
+           |> Jason.decode!()
+           |> Map.fetch!("message") == invitee_identity
 
     assert request(
              :post,

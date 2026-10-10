@@ -11,8 +11,9 @@ records the correction from the earlier Rust-only backend interpretation.
 Bandit diagnostic API, a persistent local WebSocket transport after a
 protobuf v1 handshake, and an experimental in-memory SPAKE2 rendezvous API.
 The rendezvous stores bounded exchange messages for 120 seconds and permits
-one attempt per session. The Rust/Iced client does not call it yet, and it does
-not exchange device identities or authenticate contacts. The backend still
+one attempt per session. It also relays opaque encrypted identity statements
+after both key confirmations. The Rust/Iced client does not call it yet and
+does not authenticate contacts. The backend still
 has no authenticated messaging gateway, P2P transport, or calls. The
 existing `peer/` Rust crate is preserved as a historical scaffold and is
 not the approved server core.
@@ -78,12 +79,12 @@ Pings and observed Pong for each. `peer/` also binds port
 3707 when run, so only start one scaffold at a time.
 
 The experimental `POST /api/pairing-sessions` route creates a volatile
-two-minute rendezvous session. Its API relays one SPAKE2 message and one
-confirmation message from each role; `GET` polls for the other role's message
-and `DELETE` cancels the session. The helper limits itself to 10,000 concurrent
-sessions and clears state on process restart. This is a backend primitive, not
-a complete pairing flow; client integration and signed device-key exchange
-remain open.
+two-minute rendezvous session. Its API relays one SPAKE2 message, one
+confirmation message, and one encrypted identity statement from each role;
+`GET` polls for the other role's message and `DELETE` cancels the session. The
+helper limits itself to 10,000 concurrent sessions and clears state on process
+restart. This is a backend primitive, not a complete pairing flow; client
+integration remains open.
 
 The service starts the SQLite Repo by default after setup, or the PostgreSQL
 Repo when configured as above. The [device directory boundary](docs/fichas/identity/device-directory.md)

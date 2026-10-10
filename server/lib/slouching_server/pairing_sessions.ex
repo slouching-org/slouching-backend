@@ -11,7 +11,7 @@ defmodule SlouchingServer.PairingSessions do
   @ttl_ms 120_000
   @sweep_ms 30_000
   @max_sessions 10_000
-  @message_sizes %{spake2: 33, confirm: 32}
+  @message_sizes %{spake2: 33, confirm: 32, identity: 128}
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, :ok, opts)
   end
@@ -115,10 +115,10 @@ defmodule SlouchingServer.PairingSessions do
 
   defp parse_role(_role), do: {:error, :invalid_role}
 
-  defp parse_stage(stage) when stage in [:spake2, :confirm],
+  defp parse_stage(stage) when stage in [:spake2, :confirm, :identity],
     do: {:ok, stage, Map.fetch!(@message_sizes, stage)}
 
-  defp parse_stage(stage) when stage in ["spake2", "confirm"],
+  defp parse_stage(stage) when stage in ["spake2", "confirm", "identity"],
     do: stage |> String.to_existing_atom() |> parse_stage()
 
   defp parse_stage(_stage), do: {:error, :invalid_stage}
@@ -137,6 +137,15 @@ defmodule SlouchingServer.PairingSessions do
       :ok
     else
       {:error, :spake2_incomplete}
+    end
+  end
+
+  defp stage_ready?(messages, _role, :identity) do
+    if Map.has_key?(messages, {:confirm, :inviter}) and
+         Map.has_key?(messages, {:confirm, :invitee}) do
+      :ok
+    else
+      {:error, :confirmation_incomplete}
     end
   end
 

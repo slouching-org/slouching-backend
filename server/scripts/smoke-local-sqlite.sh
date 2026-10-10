@@ -145,6 +145,18 @@ for role in ("inviter", "invitee"):
     )
     assert status == 204, (status, body)
 
+for role in ("inviter", "invitee"):
+    identity_message = base64.b64encode(bytes([0x30 if role == "inviter" else 0x40]) * 128).decode()
+    status, body = request(
+        "POST", f"/api/pairing-sessions/{role}/identity",
+        {"message": identity_message},
+        session_id,
+    )
+    assert status == 204, (status, body)
+
+status, body = request("GET", "/api/pairing-sessions/inviter/identity", session_id=session_id)
+assert status == 200 and len(json.loads(body)["message"]) == 172, (status, body)
+
 status, body = request("DELETE", "/api/pairing-sessions", session_id=session_id)
 assert status == 204, (status, body)
 status, _body = request("GET", "/api/pairing-sessions/inviter/spake2", session_id=session_id)
