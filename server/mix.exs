@@ -28,7 +28,7 @@ defmodule SlouchingServer.MixProject do
       {:ecto_sqlite3, "~> 0.25"},
       {:postgrex, "~> 0.21"},
       {:protobuf, "~> 0.17"},
-      {:ex_webrtc, "~> 0.17.0"},
+      {:ex_webrtc, path: "vendor/ex_webrtc", override: true},
       {:ex_sctp, "~> 0.1.3"},
       {:websock_adapter, "~> 0.6"}
     ]
