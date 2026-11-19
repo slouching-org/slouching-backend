@@ -1,6 +1,8 @@
 defmodule SlouchingServer.HandshakeSocketTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias ExWebRTC.{MediaStreamTrack, PeerConnection}
 
   alias Slouching.V1.{
@@ -9,6 +11,7 @@ defmodule SlouchingServer.HandshakeSocketTest do
     ClientFrame,
     ClientHello,
     SfuCallAnswer,
+    SfuCallError,
     SfuCallJoin,
     SfuCallLeave,
     SfuCallOffer,
@@ -218,6 +221,206 @@ defmodule SlouchingServer.HandshakeSocketTest do
     after
       if Process.alive?(client), do: PeerConnection.stop(client)
       _ = SlouchingServer.Calls.SfuCallRooms.leave(call_id, device_key)
+    end
+  end
+
+  test "rejects oversize pre-auth frames before protobuf decode" do
+    {public_key, _private_key} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, initial} = HandshakeSocket.init(:await_hello)
+
+    assert {:stop, :invalid_handshake, {1009, _}, ^initial} =
+             HandshakeSocket.handle_in({:binary.copy(<<0xFF>>, 1_024), opcode: :binary}, initial)
+
+    assert {:push, {:binary, _hello_response}, pending} =
+             HandshakeSocket.handle_in(
+               {ClientFrame.encode(hello(public_key)), opcode: :binary},
+               initial
+             )
+
+    assert {:stop, :invalid_authentication, {1009, _}, ^pending} =
+             HandshakeSocket.handle_in({:binary.copy(<<0xFF>>, 1_024), opcode: :binary}, pending)
+  end
+
+  test "rejects oversize fragmented WebSocket messages at the transport layer" do
+    capture_log(fn ->
+      {:ok, server} =
+        Bandit.start_link(
+          plug: SlouchingServer.Router,
+          ip: {127, 0, 0, 1},
+          port: 0,
+          startup_log: false,
+          thousand_island_options: [num_acceptors: 2]
+        )
+
+      try do
+        {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+        {:ok, sock} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false])
+
+        try do
+          upgrade_request =
+            "GET /ws HTTP/1.1\r\n" <>
+              "Host: 127.0.0.1:#{port}\r\n" <>
+              "Upgrade: websocket\r\n" <>
+              "Connection: Upgrade\r\n" <>
+              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" <>
+              "Sec-WebSocket-Version: 13\r\n\r\n"
+
+          assert :ok = :gen_tcp.send(sock, upgrade_request)
+          assert {:ok, response} = recv_http_headers(sock, "")
+          assert String.starts_with?(response, "HTTP/1.1 101")
+
+          chunk = :binary.copy(<<0xAA>>, 80_000)
+          assert :ok = :gen_tcp.send(sock, encode_masked_ws_frame(0x02, chunk))
+          # Neither fragment is final: rejection must happen in Bandit before
+          # HandshakeSocket can see a reassembled payload and return its own 1009.
+          assert :ok = :gen_tcp.send(sock, encode_masked_ws_frame(0x00, chunk))
+          assert {:ok, 1009} = recv_ws_close_code(sock)
+        after
+          :gen_tcp.close(sock)
+        end
+      after
+        Supervisor.stop(server)
+      end
+    end)
+  end
+
+  test "cancels superseded phase and ping heartbeat timers" do
+    {public_key, private_key} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, initial} = HandshakeSocket.init(:await_hello)
+    assert is_reference(initial[:timer_ref])
+    assert is_integer(Process.read_timer(initial.timer_ref))
+
+    assert {:push, {:binary, hello_response}, pending} =
+             HandshakeSocket.handle_in(
+               {ClientFrame.encode(hello(public_key)), opcode: :binary},
+               initial
+             )
+
+    assert Process.read_timer(initial.timer_ref) == false
+    assert is_integer(Process.read_timer(pending.timer_ref))
+
+    %ServerFrame{payload: {:hello, server_hello}} = ServerFrame.decode(hello_response)
+
+    signed =
+      "slouching/gateway-auth/v1\0" <>
+        <<2::unsigned-big-32>> <> public_key <> server_hello.auth_nonce
+
+    proof = %ClientFrame{
+      payload:
+        {:auth_proof,
+         %AuthProof{signature: :crypto.sign(:eddsa, :none, signed, [private_key, :ed25519])}}
+    }
+
+    assert {:push, {:binary, _response}, active} =
+             HandshakeSocket.handle_in({ClientFrame.encode(proof), opcode: :binary}, pending)
+
+    assert Process.read_timer(pending.timer_ref) == false
+    assert is_integer(Process.read_timer(active.timer_ref))
+
+    assert {:ok, refreshed} = HandshakeSocket.handle_control({<<1>>, opcode: :ping}, active)
+    assert Process.read_timer(active.timer_ref) == false
+    assert is_integer(Process.read_timer(refreshed.timer_ref))
+  end
+
+  test "clears call state after asynchronous peer exit so leave and rejoin succeed" do
+    {device_key, device_secret} = :crypto.generate_key(:eddsa, :ed25519)
+    {remote_key, _remote_secret} = :crypto.generate_key(:eddsa, :ed25519)
+    call_id = :crypto.strong_rand_bytes(16)
+    group_id = :crypto.strong_rand_bytes(16)
+    roster = [device_key, remote_key]
+    {:ok, initial} = HandshakeSocket.init(:await_hello)
+    active = authenticate_device(initial, device_key, device_secret)
+    signed = SlouchingServer.Calls.SfuCallRooms.roster_payload(call_id, group_id, 1, roster)
+
+    join_frame = %ClientFrame{
+      payload:
+        {:sfu_call_join,
+         %SfuCallJoin{
+           call_id: call_id,
+           group_id: group_id,
+           epoch: 1,
+           roster: roster,
+           roster_signature: :crypto.sign(:eddsa, :none, signed, [device_secret, :ed25519])
+         }}
+    }
+
+    assert {:push, {:binary, _joined_bytes}, joined_state} =
+             HandshakeSocket.handle_in({ClientFrame.encode(join_frame), opcode: :binary}, active)
+
+    try do
+      peer =
+        :sys.get_state(SlouchingServer.Calls.SfuCallRooms).rooms[call_id].participants[device_key].peer
+
+      GenServer.stop(peer, {:shutdown, {:peer_connection, :closed}})
+      _ = :sys.get_state(SlouchingServer.Calls.SfuCallRooms)
+
+      leave_frame = %ClientFrame{payload: {:sfu_call_leave, %SfuCallLeave{call_id: call_id}}}
+
+      assert {:stop, :normal, {1000, "call left"}, %{call_id: nil}} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(leave_frame), opcode: :binary},
+                 joined_state
+               )
+
+      assert_receive {:sfu_call_ended, ^call_id, ^device_key,
+                      {:shutdown, {:peer_connection, :closed}}} =
+                       ended_msg,
+                     500
+
+      assert {:push, {:binary, error_bytes}, cleared_state} =
+               HandshakeSocket.handle_info(ended_msg, joined_state)
+
+      assert cleared_state.call_id == nil
+
+      assert %ServerFrame{
+               payload:
+                 {:sfu_call_error,
+                  %SfuCallError{call_id: ^call_id, code: "peer_connection_closed"}}
+             } = ServerFrame.decode(error_bytes)
+
+      assert {:push, {:binary, rejoined_bytes}, rejoined_state} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(join_frame), opcode: :binary},
+                 cleared_state
+               )
+
+      assert %ServerFrame{payload: {:sfu_call_joined, %SfuCallJoined{call_id: ^call_id}}} =
+               ServerFrame.decode(rejoined_bytes)
+
+      assert rejoined_state.call_id == call_id
+
+      assert {:stop, :normal, {1000, "call left"}, ^cleared_state} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(leave_frame), opcode: :binary},
+                 cleared_state
+               )
+    after
+      _ = SlouchingServer.Calls.SfuCallRooms.leave(call_id, device_key)
+    end
+  end
+
+  defp encode_masked_ws_frame(first_byte, payload) do
+    mask = <<1, 2, 3, 4>>
+    len = byte_size(payload)
+    masked = :crypto.exor(payload, binary_part(:binary.copy(mask, div(len, 4) + 1), 0, len))
+    <<first_byte, 1::1, 127::7, len::64>> <> mask <> masked
+  end
+
+  defp recv_http_headers(sock, acc) do
+    if String.contains?(acc, "\r\n\r\n") do
+      {:ok, acc}
+    else
+      case :gen_tcp.recv(sock, 0, 2_000) do
+        {:ok, chunk} -> recv_http_headers(sock, acc <> chunk)
+        error -> error
+      end
+    end
+  end
+
+  defp recv_ws_close_code(sock) do
+    case :gen_tcp.recv(sock, 4, 2_000) do
+      {:ok, <<0x88, 0::1, len::7, code::16>>} when len >= 2 -> {:ok, code}
+      other -> {:error, other}
     end
   end
 

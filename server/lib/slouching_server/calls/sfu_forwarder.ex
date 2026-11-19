@@ -7,7 +7,7 @@ defmodule SlouchingServer.Calls.SfuForwarder do
   per-source outbound-track map. It never parses or decrypts the RTP payload.
   """
 
-  use GenServer
+  use GenServer, restart: :temporary
 
   alias ExWebRTC.PeerConnection
 
@@ -262,12 +262,20 @@ defmodule SlouchingServer.Calls.SfuForwarder do
   defp drop_participant(state, device_key) do
     participant = Map.fetch!(state.participants, device_key)
     Process.demonitor(participant.monitor, [:flush])
+    preserve_route? = not is_nil(state.members) and MapSet.member?(state.members, device_key)
 
     participants =
       state.participants
       |> Map.delete(device_key)
       |> Map.new(fn {key, remaining} ->
-        {key, %{remaining | outbound_tracks: Map.delete(remaining.outbound_tracks, device_key)}}
+        outbound_tracks =
+          if preserve_route? do
+            remaining.outbound_tracks
+          else
+            Map.delete(remaining.outbound_tracks, device_key)
+          end
+
+        {key, %{remaining | outbound_tracks: outbound_tracks}}
       end)
 
     %{state | participants: participants}
@@ -288,7 +296,7 @@ defmodule SlouchingServer.Calls.SfuForwarder do
     supplied_sources = MapSet.new(Map.keys(tracks))
 
     valid_device_key?(local_key) and MapSet.subset?(supplied_sources, expected_sources) and
-      (is_list(members) or supplied_sources == expected_sources) and
+      (not is_nil(members) or supplied_sources == expected_sources) and
       Enum.all?(tracks, fn {source_key, media_tracks} ->
         valid_device_key?(source_key) and is_map(media_tracks) and
           Enum.all?(Map.to_list(media_tracks), fn

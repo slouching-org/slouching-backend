@@ -220,6 +220,56 @@ defmodule SlouchingServer.Calls.SfuForwarderTest do
     assert :ok = :sys.resume(subscriber_pc)
   end
 
+  test "preserves pre-negotiated outbound routes in roster rooms when a member reconnects" do
+    first_key = :binary.copy(<<21>>, 32)
+    second_key = :binary.copy(<<22>>, 32)
+    third_key = :binary.copy(<<23>>, 32)
+    {:ok, room} = SfuForwarder.start_link(members: [first_key, second_key, third_key])
+
+    {:ok, first_pc} = CapturePeer.start_link(self())
+    {:ok, second_pc_initial} = CapturePeer.start_link(self())
+
+    assert :ok =
+             SfuForwarder.add_participant(room, first_key, first_pc, %{
+               second_key => %{audio: 101},
+               third_key => %{audio: 102}
+             })
+
+    assert :ok =
+             SfuForwarder.add_participant(room, second_key, second_pc_initial, %{
+               first_key => %{audio: 201},
+               third_key => %{audio: 202}
+             })
+
+    assert :ok = SfuForwarder.register_source_track(room, second_key, :audio, 10)
+    initial_packet = ExRTP.Packet.new(<<0x53, 0x46, 0x52, 0x41, 0x4D, 0x45, 1>>)
+    assert :ok = SfuForwarder.forward(room, second_key, :audio, 10, initial_packet)
+    assert_receive {:forwarded_rtp, 101, ^initial_packet}
+
+    assert :ok = SfuForwarder.remove_participant(room, second_key)
+    GenServer.stop(second_pc_initial)
+
+    {:ok, second_pc_reconnected} = CapturePeer.start_link(self())
+
+    assert :ok =
+             SfuForwarder.add_participant(room, second_key, second_pc_reconnected, %{
+               first_key => %{audio: 203},
+               third_key => %{audio: 204}
+             })
+
+    assert :ok = SfuForwarder.register_source_track(room, second_key, :audio, 20)
+    reconnected_packet = ExRTP.Packet.new(<<0x53, 0x46, 0x52, 0x41, 0x4D, 0x45, 2>>)
+    assert :ok = SfuForwarder.forward(room, second_key, :audio, 20, reconnected_packet)
+    assert_receive {:forwarded_rtp, 101, ^reconnected_packet}
+
+    {:ok, third_pc} = CapturePeer.start_link(self())
+
+    assert :ok =
+             SfuForwarder.add_participant(room, third_key, third_pc, %{
+               first_key => %{audio: 301}
+             })
+  end
+
   defp eventually(fun, attempts \\ 20)
   defp eventually(fun, 0), do: fun.()
 

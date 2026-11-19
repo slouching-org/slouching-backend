@@ -21,13 +21,13 @@ defmodule SlouchingServer.MixProject do
 
   defp deps do
     [
-      {:bandit, "~> 1.12"},
-      {:plug, "~> 1.20"},
+      {:bandit, "~> 1.14 and >= 1.14.1"},
+      {:plug, "~> 1.20 and >= 1.20.4"},
       {:jason, "~> 1.4"},
       {:ecto_sql, "~> 3.13"},
       {:ecto_sqlite3, "~> 0.25"},
       {:postgrex, "~> 0.21"},
-      {:protobuf, "~> 0.17"},
+      {:protobuf, "~> 0.17.1"},
       {:ex_webrtc, path: "vendor/ex_webrtc", override: true},
       {:ex_sctp, "~> 0.1.3"},
       {:websock_adapter, "~> 0.6"}

@@ -27,22 +27,30 @@ defmodule SlouchingServer.HandshakeSocket do
   @hello_timeout_ms 5_000
   @heartbeat_timeout_ms 15_000
   @auth_timeout_ms 5_000
+  @max_handshake_frame_bytes 512
+  @max_active_frame_bytes 140_000
   @auth_domain "slouching/gateway-auth/v1\0"
 
   @impl true
   def init(:await_hello) do
-    schedule_timeout(:hello, 0, @hello_timeout_ms)
+    timer_ref = schedule_timeout(:hello, 0, @hello_timeout_ms)
 
     {:ok,
      %{
        phase: :await_hello,
        generation: 0,
+       timer_ref: timer_ref,
        call_id: nil,
        call_rooms: SfuCallRooms
      }}
   end
 
   @impl true
+  def handle_in({payload, [opcode: :binary]}, %{phase: :await_hello} = state)
+      when byte_size(payload) > @max_handshake_frame_bytes do
+    {:stop, :invalid_handshake, {1009, "Handshake frame too large"}, state}
+  end
+
   def handle_in({payload, [opcode: :binary]}, %{phase: :await_hello} = state) do
     case ClientFrame.decode(payload) do
       %ClientFrame{
@@ -65,15 +73,19 @@ defmodule SlouchingServer.HandshakeSocket do
                }}
           }
 
+        cancel_timeout(state.timer_ref)
+        generation = state.generation + 1
+        timer_ref = schedule_timeout(:authentication, generation, @auth_timeout_ms)
+
         next_state =
           Map.merge(state, %{
             phase: :await_auth_proof,
-            generation: state.generation + 1,
+            generation: generation,
+            timer_ref: timer_ref,
             device_public_key: public_key,
             auth_nonce: nonce
           })
 
-        schedule_timeout(:authentication, next_state.generation, @auth_timeout_ms)
         {:push, {:binary, ServerFrame.encode(reply)}, next_state}
 
       %ClientFrame{payload: {:hello, %{protocol_version: version}}}
@@ -95,6 +107,11 @@ defmodule SlouchingServer.HandshakeSocket do
       {:stop, :invalid_handshake, {1002, "Invalid protobuf"}, state}
   end
 
+  def handle_in({payload, [opcode: :binary]}, %{phase: :await_auth_proof} = state)
+      when byte_size(payload) > @max_handshake_frame_bytes do
+    {:stop, :invalid_authentication, {1009, "Authentication frame too large"}, state}
+  end
+
   def handle_in({payload, [opcode: :binary]}, %{phase: :await_auth_proof} = state) do
     case ClientFrame.decode(payload) do
       %ClientFrame{payload: {:auth_proof, %AuthProof{signature: signature}}}
@@ -111,15 +128,19 @@ defmodule SlouchingServer.HandshakeSocket do
                }}
           }
 
+          cancel_timeout(state.timer_ref)
+          generation = state.generation + 1
+          timer_ref = schedule_timeout(:heartbeat, generation, @heartbeat_timeout_ms)
+
           next_state = %{
             state
             | phase: :active,
-              generation: state.generation + 1,
+              generation: generation,
+              timer_ref: timer_ref,
               call_id: nil,
               call_rooms: SlouchingServer.Calls.SfuCallRooms
           }
 
-          schedule_timeout(:heartbeat, next_state.generation, @heartbeat_timeout_ms)
           {:push, {:binary, ServerFrame.encode(reply)}, next_state}
         else
           {:stop, :invalid_authentication, {1008, "invalid device proof"}, state}
@@ -138,10 +159,22 @@ defmodule SlouchingServer.HandshakeSocket do
   def handle_in({_payload, [opcode: :text]}, %{phase: :await_auth_proof} = state),
     do: {:stop, :invalid_authentication, {1003, "Binary frame required"}, state}
 
+  def handle_in({payload, [opcode: :binary]}, %{phase: :active} = state)
+      when byte_size(payload) > @max_active_frame_bytes do
+    {:stop, :invalid_call_frame, {1009, "Call frame too large"}, state}
+  end
+
   def handle_in({payload, [opcode: :binary]}, %{phase: :active, call_id: nil} = state) do
     case ClientFrame.decode(payload) do
-      %ClientFrame{payload: {:sfu_call_join, request}} -> join_call(request, state)
-      _ -> call_error(<<>>, :join_required, state)
+      %ClientFrame{payload: {:sfu_call_join, request}} ->
+        join_call(request, state)
+
+      %ClientFrame{payload: {:sfu_call_leave, %{call_id: call_id}}}
+      when byte_size(call_id) == 16 ->
+        {:stop, :normal, {1000, "call left"}, state}
+
+      _ ->
+        call_error(<<>>, :join_required, state)
     end
   rescue
     Protobuf.DecodeError -> {:stop, :invalid_call_frame, {1002, "Invalid protobuf"}, state}
@@ -169,7 +202,11 @@ defmodule SlouchingServer.HandshakeSocket do
 
       %ClientFrame{payload: {:sfu_call_leave, %{call_id: call_id}}}
       when call_id == state.call_id ->
-        :ok = SfuCallRooms.leave(state.call_rooms, call_id, state.device_public_key)
+        case SfuCallRooms.leave(state.call_rooms, call_id, state.device_public_key) do
+          :ok -> :ok
+          {:error, :unknown_participant} -> :ok
+        end
+
         {:stop, :normal, {1000, "call left"}, %{state | call_id: nil}}
 
       _ ->
@@ -184,9 +221,10 @@ defmodule SlouchingServer.HandshakeSocket do
 
   @impl true
   def handle_control({_payload, [opcode: :ping]}, %{phase: :active} = state) do
-    next_state = %{state | generation: state.generation + 1}
-    schedule_timeout(:heartbeat, next_state.generation, @heartbeat_timeout_ms)
-    {:ok, next_state}
+    cancel_timeout(state.timer_ref)
+    generation = state.generation + 1
+    timer_ref = schedule_timeout(:heartbeat, generation, @heartbeat_timeout_ms)
+    {:ok, %{state | generation: generation, timer_ref: timer_ref}}
   end
 
   def handle_control({_payload, _opcode}, state), do: {:ok, state}
@@ -223,18 +261,32 @@ defmodule SlouchingServer.HandshakeSocket do
     {:push, {:binary, ServerFrame.encode(frame)}, state}
   end
 
+  def handle_info(
+        {:sfu_call_ended, call_id, device_key, reason},
+        %{phase: :active, call_id: call_id, device_public_key: device_key} = state
+      ) do
+    call_error(call_id, ended_error_code(reason), %{state | call_id: nil})
+  end
+
   def handle_info(_message, state), do: {:ok, state}
 
   @impl true
-  def terminate(_reason, %{call_id: call_id, device_public_key: device_key, call_rooms: rooms})
+  def terminate(
+        _reason,
+        %{call_id: call_id, device_public_key: device_key, call_rooms: rooms} = state
+      )
       when is_binary(call_id) do
+    cancel_timeout(Map.get(state, :timer_ref))
     _ = SfuCallRooms.leave(rooms, call_id, device_key)
     :ok
   catch
     :exit, _reason -> :ok
   end
 
-  def terminate(_reason, _state), do: :ok
+  def terminate(_reason, state) do
+    cancel_timeout(Map.get(state, :timer_ref))
+    :ok
+  end
 
   defp join_call(request, state) do
     %{
@@ -321,9 +373,27 @@ defmodule SlouchingServer.HandshakeSocket do
   defp error_code({:room_rejected_peer, reason}) when is_atom(reason), do: reason
   defp error_code(_reason), do: :call_request_failed
 
+  defp ended_error_code({:shutdown, {:peer_connection, :closed}}), do: :peer_connection_closed
+  defp ended_error_code({:shutdown, {:peer_connection, :failed}}), do: :peer_connection_failed
+
+  defp ended_error_code({:shutdown, {:peer_connection_down, _reason}}),
+    do: :peer_connection_failed
+
+  defp ended_error_code({:shutdown, {_tag, reason}}) when is_atom(reason), do: reason
+  defp ended_error_code({:shutdown, reason}) when is_atom(reason), do: reason
+  defp ended_error_code(reason) when is_atom(reason), do: reason
+  defp ended_error_code(_reason), do: :call_ended
+
   defp schedule_timeout(kind, generation, interval_ms) do
     Process.send_after(self(), {:socket_timeout, kind, generation}, interval_ms)
   end
+
+  defp cancel_timeout(timer_ref) when is_reference(timer_ref) do
+    _ = Process.cancel_timer(timer_ref, async: true, info: false)
+    :ok
+  end
+
+  defp cancel_timeout(_timer_ref), do: :ok
 
   defp auth_payload(public_key, nonce) do
     @auth_domain <> <<@protocol_version::unsigned-big-32>> <> public_key <> nonce

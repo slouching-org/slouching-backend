@@ -11,6 +11,7 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
   alias ExWebRTC.ICECandidate
   alias SlouchingServer.Calls.{SfuForwarder, SfuPeer}
 
+  @shutdown_timeout_ms 1_000
   @max_rooms 1_000
   @max_members 16
   @max_sdp_bytes 128 * 1024
@@ -27,12 +28,29 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
     )
   end
 
-  def answer_offer(server \\ __MODULE__, call_id, device_key, sdp) do
-    GenServer.call(server, {:answer_offer, call_id, device_key, sdp}, 20_000)
+  def answer_offer(server \\ __MODULE__, call_id, device_key, sdp)
+
+  def answer_offer(server, call_id, device_key, sdp)
+      when is_binary(sdp) and byte_size(sdp) in 1..@max_sdp_bytes do
+    with {:ok, peer} <- GenServer.call(server, {:fetch_peer, call_id, device_key}) do
+      try do
+        SfuPeer.answer_offer(peer, sdp)
+      catch
+        :exit, _reason -> {:error, :peer_unavailable}
+      end
+    end
   end
 
+  def answer_offer(_server, _call_id, _device_key, _sdp), do: {:error, :invalid_offer_size}
+
   def add_ice_candidate(server \\ __MODULE__, call_id, device_key, %ICECandidate{} = candidate) do
-    GenServer.call(server, {:add_ice_candidate, call_id, device_key, candidate})
+    with {:ok, peer} <- GenServer.call(server, {:fetch_peer, call_id, device_key}) do
+      try do
+        SfuPeer.add_ice_candidate(peer, candidate)
+      catch
+        :exit, _reason -> {:error, :peer_unavailable}
+      end
+    end
   end
 
   def leave(server \\ __MODULE__, call_id, device_key) do
@@ -55,7 +73,11 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
   def roster_payload(_call_id, _group_id, _epoch, _roster), do: <<>>
 
   @impl true
-  def init(:ok), do: {:ok, %{rooms: %{}, monitors: %{}}}
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
+    {:ok, %{rooms: %{}, monitors: %{}, supervisor: supervisor}}
+  end
 
   @impl true
   def handle_call(
@@ -67,43 +89,43 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
 
     with :ok <- validate_join(call_id, group_id, epoch, roster, device_key, signature, owner),
          :ok <- verify_roster_signature(call_id, group_id, epoch, roster, device_key, signature),
-         {:ok, room} <- fetch_or_create_room(state, call_id, group_id, epoch, roster),
-         :ok <- ensure_room_member(room, device_key),
-         {:ok, room, _participant, new_monitors} <-
-           start_participant(room, call_id, device_key, roster, owner) do
-      rooms = Map.put(state.rooms, call_id, room)
-      monitors = Map.merge(state.monitors, new_monitors)
-      {:reply, :ok, %{state | rooms: rooms, monitors: monitors}}
+         {:ok, room, room_monitors, created?} <-
+           fetch_or_create_room(state, call_id, group_id, epoch, roster) do
+      with :ok <- ensure_room_member(room, device_key),
+           {:ok, room, _participant, participant_monitors} <-
+             start_participant(state.supervisor, room, call_id, device_key, roster, owner) do
+        rooms = Map.put(state.rooms, call_id, room)
+
+        monitors =
+          state.monitors
+          |> Map.merge(room_monitors)
+          |> Map.merge(participant_monitors)
+
+        {:reply, :ok, %{state | rooms: rooms, monitors: monitors}}
+      else
+        {:error, reason} ->
+          if created? do
+            Process.demonitor(room.forwarder_monitor, [:flush])
+            stop_child(room.forwarder)
+          end
+
+          {:reply, {:error, reason}, state}
+      end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
-  def handle_call({:answer_offer, call_id, device_key, sdp}, _from, state)
-      when is_binary(sdp) and byte_size(sdp) in 1..@max_sdp_bytes do
-    with {:ok, participant} <- fetch_participant(state, call_id, device_key),
-         {:ok, answer} <- SfuPeer.answer_offer(participant.peer, sdp) do
-      {:reply, {:ok, answer}, state}
-    else
+  def handle_call({:fetch_peer, call_id, device_key}, _from, state) do
+    case fetch_participant(state, call_id, device_key) do
+      {:ok, participant} -> {:reply, {:ok, participant.peer}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
-  def handle_call({:answer_offer, _call_id, _device_key, _sdp}, _from, state),
-    do: {:reply, {:error, :invalid_offer_size}, state}
-
-  def handle_call({:add_ice_candidate, call_id, device_key, candidate}, _from, state) do
-    with {:ok, participant} <- fetch_participant(state, call_id, device_key),
-         :ok <- SfuPeer.add_ice_candidate(participant.peer, candidate) do
-      {:reply, :ok, state}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:leave, call_id, device_key}, _from, state) do
-    case drop_participant(state, call_id, device_key) do
-      {:ok, next} -> {:reply, :ok, next}
+  def handle_call({:leave, call_id, device_key}, from, state) do
+    case begin_leave(state, call_id, device_key, from) do
+      {:ok, next} -> {:noreply, next}
       :error -> {:reply, {:error, :unknown_participant}, state}
     end
   end
@@ -131,17 +153,43 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
     {:noreply, state}
   end
 
-  def handle_info({:DOWN, monitor, :process, _pid, _reason}, state) do
+  def handle_info({:DOWN, monitor, :process, _pid, reason}, state) do
     case Map.pop(state.monitors, monitor) do
       {nil, _monitors} ->
         {:noreply, state}
 
-      {{call_id, device_key}, monitors} ->
+      {{:forwarder, call_id}, monitors} ->
+        {:noreply, drop_room(%{state | monitors: monitors}, call_id, {:forwarder_down, reason})}
+
+      {{:peer, call_id, device_key}, monitors} ->
+        case fetch_participant(state, call_id, device_key) do
+          {:ok, _participant} ->
+            notify_participant(
+              state,
+              call_id,
+              device_key,
+              {:sfu_call_ended, call_id, device_key, reason}
+            )
+
+          _ ->
+            :ok
+        end
+
         case drop_participant(%{state | monitors: monitors}, call_id, device_key) do
           {:ok, next} -> {:noreply, next}
           :error -> {:noreply, %{state | monitors: monitors}}
         end
+
+      {{:owner, call_id, device_key}, monitors} ->
+        case begin_leave(%{state | monitors: monitors}, call_id, device_key, nil) do
+          {:ok, next} -> {:noreply, next}
+          :error -> {:noreply, %{state | monitors: monitors}}
+        end
     end
+  end
+
+  def handle_info({:EXIT, supervisor, reason}, %{supervisor: supervisor} = state) do
+    {:stop, reason, state}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -150,11 +198,19 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
   def terminate(_reason, state) do
     Enum.each(state.rooms, fn {_call_id, room} ->
       Enum.each(room.participants, fn {_device_key, participant} ->
-        if Process.alive?(participant.peer), do: GenServer.stop(participant.peer, :normal)
+        stop_child(participant.peer)
       end)
 
-      if Process.alive?(room.forwarder), do: GenServer.stop(room.forwarder, :normal)
+      stop_child(room.forwarder)
     end)
+
+    if Process.alive?(state.supervisor) do
+      try do
+        Supervisor.stop(state.supervisor, :normal)
+      catch
+        :exit, _reason -> :ok
+      end
+    end
 
     :ok
   end
@@ -210,7 +266,7 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
   defp fetch_or_create_room(state, call_id, group_id, epoch, roster) do
     case Map.fetch(state.rooms, call_id) do
       {:ok, %{group_id: ^group_id, epoch: ^epoch, roster: ^roster} = room} ->
-        {:ok, room}
+        {:ok, room, %{}, false}
 
       {:ok, _room} ->
         {:error, :call_roster_mismatch}
@@ -219,19 +275,21 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
         {:error, :call_service_at_capacity}
 
       :error ->
-        case SfuForwarder.start_link(members: roster) do
+        case DynamicSupervisor.start_child(state.supervisor, {SfuForwarder, [members: roster]}) do
           {:ok, forwarder} ->
-            Process.unlink(forwarder)
+            forwarder_monitor = Process.monitor(forwarder)
 
-            {:ok,
-             %{
-               call_id: call_id,
-               group_id: group_id,
-               epoch: epoch,
-               roster: roster,
-               forwarder: forwarder,
-               participants: %{}
-             }}
+            room = %{
+              call_id: call_id,
+              group_id: group_id,
+              epoch: epoch,
+              roster: roster,
+              forwarder: forwarder,
+              forwarder_monitor: forwarder_monitor,
+              participants: %{}
+            }
+
+            {:ok, room, %{forwarder_monitor => {:forwarder, call_id}}, true}
 
           {:error, reason} ->
             {:error, {:call_service_start_failed, reason}}
@@ -247,7 +305,7 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
     end
   end
 
-  defp start_participant(room, call_id, device_key, roster, owner) do
+  defp start_participant(supervisor, room, call_id, device_key, roster, owner) do
     opts = [
       device_key: device_key,
       remote_source_keys: List.delete(roster, device_key),
@@ -256,8 +314,7 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
       call_id: call_id
     ]
 
-    with {:ok, peer} <- SfuPeer.start_link(opts) do
-      Process.unlink(peer)
+    with {:ok, peer} <- DynamicSupervisor.start_child(supervisor, {SfuPeer, opts}) do
       owner_monitor = Process.monitor(owner)
       peer_monitor = Process.monitor(peer)
 
@@ -265,14 +322,16 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
         owner: owner,
         peer: peer,
         owner_monitor: owner_monitor,
-        peer_monitor: peer_monitor
+        peer_monitor: peer_monitor,
+        leaving?: false,
+        leave_waiters: []
       }
 
       room = put_in(room.participants[device_key], participant)
 
       monitors = %{
-        owner_monitor => {call_id, device_key},
-        peer_monitor => {call_id, device_key}
+        owner_monitor => {:owner, call_id, device_key},
+        peer_monitor => {:peer, call_id, device_key}
       }
 
       {:ok, room, participant, monitors}
@@ -281,7 +340,7 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
 
   defp fetch_participant(state, call_id, device_key) do
     with {:ok, room} <- Map.fetch(state.rooms, call_id),
-         {:ok, participant} <- Map.fetch(room.participants, device_key) do
+         {:ok, %{leaving?: false} = participant} <- Map.fetch(room.participants, device_key) do
       {:ok, participant}
     else
       _ -> {:error, :unknown_participant}
@@ -297,12 +356,28 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
     end
   end
 
+  # Keep admission reserved until DOWN. The caller waits for its own teardown,
+  # but neither this coordinator nor the shared DynamicSupervisor waits for it.
+  defp begin_leave(state, call_id, device_key, from) do
+    with {:ok, room} <- Map.fetch(state.rooms, call_id),
+         {:ok, participant} <- Map.fetch(room.participants, device_key) do
+      unless participant.leaving?, do: stop_child(participant.peer)
+      Process.demonitor(participant.owner_monitor, [:flush])
+      waiters = if from, do: [from | participant.leave_waiters], else: participant.leave_waiters
+      participant = %{participant | leaving?: true, leave_waiters: waiters}
+      state = put_in(state.rooms[call_id].participants[device_key], participant)
+      {:ok, %{state | monitors: Map.delete(state.monitors, participant.owner_monitor)}}
+    else
+      _ -> :error
+    end
+  end
+
   defp drop_participant(state, call_id, device_key) do
     with {:ok, room} <- Map.fetch(state.rooms, call_id),
          {:ok, participant} <- Map.fetch(room.participants, device_key) do
       Process.demonitor(participant.owner_monitor, [:flush])
       Process.demonitor(participant.peer_monitor, [:flush])
-      if Process.alive?(participant.peer), do: GenServer.stop(participant.peer, :normal)
+      Enum.each(participant.leave_waiters, &GenServer.reply(&1, :ok))
 
       monitors =
         state.monitors
@@ -312,7 +387,9 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
       participants = Map.delete(room.participants, device_key)
 
       if map_size(participants) == 0 do
-        if Process.alive?(room.forwarder), do: GenServer.stop(room.forwarder, :normal)
+        Process.demonitor(room.forwarder_monitor, [:flush])
+        monitors = Map.delete(monitors, room.forwarder_monitor)
+        stop_child(room.forwarder)
         {:ok, %{state | rooms: Map.delete(state.rooms, call_id), monitors: monitors}}
       else
         room = %{room | participants: participants}
@@ -321,5 +398,51 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
     else
       _ -> :error
     end
+  end
+
+  defp drop_room(state, call_id, reason) do
+    case Map.pop(state.rooms, call_id) do
+      {nil, _rooms} ->
+        state
+
+      {room, rooms} ->
+        Process.demonitor(room.forwarder_monitor, [:flush])
+
+        monitors =
+          Enum.reduce(
+            room.participants,
+            Map.delete(state.monitors, room.forwarder_monitor),
+            fn {device_key, participant}, acc ->
+              unless participant.leaving?,
+                do: send(participant.owner, {:sfu_call_ended, call_id, device_key, reason})
+
+              Enum.each(participant.leave_waiters, &GenServer.reply(&1, :ok))
+              Process.demonitor(participant.owner_monitor, [:flush])
+              Process.demonitor(participant.peer_monitor, [:flush])
+              stop_child(participant.peer)
+
+              acc
+              |> Map.delete(participant.owner_monitor)
+              |> Map.delete(participant.peer_monitor)
+            end
+          )
+
+        stop_child(room.forwarder)
+        %{state | rooms: rooms, monitors: monitors}
+    end
+  end
+
+  defp stop_child(pid) when is_pid(pid) do
+    # Calling DynamicSupervisor.terminate_child here would serialize every room
+    # behind a stalled child. Temporary children remove themselves on exit.
+    Task.start(fn ->
+      try do
+        GenServer.stop(pid, :shutdown, @shutdown_timeout_ms)
+      catch
+        :exit, _reason -> Process.exit(pid, :kill)
+      end
+    end)
+
+    :ok
   end
 end

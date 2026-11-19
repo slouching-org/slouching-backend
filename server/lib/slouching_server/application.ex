@@ -27,7 +27,12 @@ defmodule SlouchingServer.Application do
              [
                plug: SlouchingServer.Router,
                ip: Application.fetch_env!(:slouching_server, :server_ip),
-               port: Application.fetch_env!(:slouching_server, :server_port)
+               port: Application.fetch_env!(:slouching_server, :server_port),
+               websocket_options: [
+                 max_frame_size: 140_000,
+                 max_fragmented_message_size: 140_000,
+                 compress: false
+               ]
              ],
              Application.get_env(:slouching_server, :server_tls_options, [])
            )}
