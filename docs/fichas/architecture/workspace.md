@@ -1,6 +1,6 @@
 # Backend repository layout
 
-**Status:** Elixir service scaffold implemented; product domains are planned.
+**Status:** optional Elixir helper with pairing, ciphertext delivery, and experimental SFU services.
 
 ```text
 slouching-backend/
@@ -11,11 +11,16 @@ slouching-backend/
 
 The frontend is a separate Rust/Iced repository,
 `slouching-org/slouching-frontend`. The Elixir service currently exposes
-`/health`, versioned `/api/status`, and a persistent development WebSocket
-transport after a binary protobuf handshake at `/ws` on `127.0.0.1:3707`; it has no authenticated gateway,
-database, delivery, identity, media, or peer transport. The old Rust `peer/`
+`/health`, versioned `/api/status`, SPAKE2 pairing rendezvous, a signed opaque-copy
+mailbox, and experimental SFU signaling and encrypted-media forwarding. The `/ws`
+gateway uses a protobuf v2 device-key challenge; SFU admission separately checks
+signed roster consistency, without independently verifying MLS membership.
+SQLite is the default helper store; `SLOUCHING_DATABASE_URL` selects PostgreSQL,
+whose migration directory is currently missing. There is no device enrollment
+or lookup route, required identity directory, or direct P2P transport in the
+helper. The old Rust `peer/`
 crate can also bind port 3707, so do not run both scaffolds together.
 
-The planned server domains are described in the [Elixir backend boundary](elixir-backend.md)
-and [ADR 0005](adr-0005-elixir-server-core.md). Code and release compatibility
-between the two repositories remain to be specified for product traffic.
+The server boundaries and planned domains are described in the [Elixir backend boundary](elixir-backend.md)
+and [ADR 0005](adr-0005-elixir-server-core.md). The shared protobuf schema and HTTP helper contracts describe the current
+client/backend interfaces; remote deployment and physical-device validation remain open.
