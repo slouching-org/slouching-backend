@@ -158,7 +158,9 @@ defmodule SlouchingServer.Router do
     conn
     |> WebSockAdapter.upgrade(SlouchingServer.HandshakeSocket, :await_hello,
       timeout: 20_000,
-      max_frame_size: 140_000
+      max_frame_size: 140_000,
+      max_fragmented_message_size: 140_000,
+      compress: false
     )
     |> halt()
   end

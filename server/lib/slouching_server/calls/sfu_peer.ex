@@ -11,6 +11,7 @@ defmodule SlouchingServer.Calls.SfuPeer do
   alias SlouchingServer.Calls.{SfuForwarder, SfuNegotiation}
 
   @offer_timeout 15_000
+  @initial_offer_timeout_ms 15_000
   @max_ice_port_span 4_095
 
   def start_link(opts) do
@@ -29,6 +30,7 @@ defmodule SlouchingServer.Calls.SfuPeer do
 
     with {:ok, device_key} <- fetch_device_key(opts),
          {:ok, source_keys} <- fetch_source_keys(opts),
+         {:ok, initial_offer_timeout_ms} <- fetch_initial_offer_timeout(opts),
          forwarder when not is_nil(forwarder) <- Keyword.get(opts, :forwarder),
          signaling_owner when is_pid(signaling_owner) <- Keyword.get(opts, :signaling_owner),
          {:ok, ice_options} <- sfu_ice_options(),
@@ -39,6 +41,7 @@ defmodule SlouchingServer.Calls.SfuPeer do
       monitor = Process.monitor(peer_connection)
       # Keep the ownership link: trapped PC exits are handled by the monitor,
       # while a forced peer shutdown must also kill its PC and transports.
+      offer_timer = Process.send_after(self(), :initial_offer_timeout, initial_offer_timeout_ms)
 
       {:ok,
        %{
@@ -48,6 +51,7 @@ defmodule SlouchingServer.Calls.SfuPeer do
          signaling_owner: signaling_owner,
          peer_connection: peer_connection,
          peer_connection_monitor: monitor,
+         offer_timer: offer_timer,
          call_id: Keyword.get(opts, :call_id),
          active?: false,
          inbound_audio_track: nil,
@@ -80,7 +84,8 @@ defmodule SlouchingServer.Calls.SfuPeer do
                outbound_tracks
              ) do
           :ok ->
-            {:reply, {:ok, negotiation}, %{state | active?: true}}
+            cancel_timer(state.offer_timer)
+            {:reply, {:ok, negotiation}, %{state | active?: true, offer_timer: nil}}
 
           {:error, :forwarder_unavailable} ->
             {:stop, {:shutdown, :forwarder_unavailable}, {:error, :call_unavailable}, state}
@@ -223,6 +228,14 @@ defmodule SlouchingServer.Calls.SfuPeer do
     end
   end
 
+  def handle_info(:initial_offer_timeout, %{active?: false} = state) do
+    {:stop, {:shutdown, :offer_timeout}, %{state | offer_timer: nil}}
+  end
+
+  def handle_info(:initial_offer_timeout, state) do
+    {:noreply, %{state | offer_timer: nil}}
+  end
+
   def handle_info(
         {:DOWN, monitor, :process, peer_connection, reason},
         %{peer_connection_monitor: monitor, peer_connection: peer_connection} = state
@@ -234,6 +247,8 @@ defmodule SlouchingServer.Calls.SfuPeer do
 
   @impl true
   def terminate(_reason, state) do
+    cancel_timer(state.offer_timer)
+
     if state.active? do
       safe_call(fn -> SfuForwarder.remove_participant(state.forwarder, state.device_key) end)
     end
@@ -282,6 +297,20 @@ defmodule SlouchingServer.Calls.SfuPeer do
       {:error, :invalid_remote_source_keys}
     end
   end
+
+  defp fetch_initial_offer_timeout(opts) do
+    case Keyword.get(opts, :initial_offer_timeout_ms, @initial_offer_timeout_ms) do
+      timeout when is_integer(timeout) and timeout > 0 -> {:ok, timeout}
+      _ -> {:error, :invalid_initial_offer_timeout}
+    end
+  end
+
+  defp cancel_timer(timer_ref) when is_reference(timer_ref) do
+    _ = Process.cancel_timer(timer_ref, async: true, info: false)
+    :ok
+  end
+
+  defp cancel_timer(_timer_ref), do: :ok
 
   defp valid_call_data_channel?(%DataChannel{
          label: "slouching-call-v1",
