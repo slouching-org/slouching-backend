@@ -156,12 +156,12 @@ curl http://127.0.0.1:3707/api/status
 ```
 
 The [versioned status response](docs/fichas/architecture/local-status-api.md)
-reports only process availability and unavailable capabilities. The native
+reports process availability and the experimental calls capability. The native
 Rust/Iced client can use the binary protobuf `ws://127.0.0.1:3707/ws`
-handshake. It checks protocol version and proves possession of the local
+handshake. It checks protocol version 2 and proves possession of the local
 Ed25519 device key using a fresh challenge, then stays open while the client
 sends WebSocket Ping frames every 5 seconds. This grants no product
-authorization and carries no application traffic. The server closes an idle
+authorization by itself; separately checked SFU signaling follows authentication. The server closes an idle
 session after 15 seconds without Ping. `peer/` also binds port
 3707 when run, so only start one scaffold at a time.
 
@@ -190,8 +190,8 @@ still applies before adding enrollment or lookup routes.
 ## Repository layout
 
 ```text
-server/              Elixir/OTP diagnostics, experimental SPAKE2 rendezvous, and directory schema
-proto/               Shared v1 protobuf handshake schema
+server/              Elixir/OTP diagnostics, pairing rendezvous, ciphertext mailbox, and experimental SFU
+proto/               Shared slouching.v1 schema; gateway protocol v2
 peer/                Preserved Rust peer-first experiment
 docs/fichas/         Source notes, architecture decisions, domain plans
 ```
