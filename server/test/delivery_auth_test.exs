@@ -3,7 +3,6 @@ defmodule SlouchingServer.Delivery.AuthTest do
 
   alias SlouchingServer.Delivery.Auth
   alias SlouchingServer.Delivery.RequestNonce
-  alias SlouchingServer.Repo
 
   test "authenticates canonical Ed25519 requests once and rejects replay" do
     now = 1_800_000_000
@@ -36,7 +35,7 @@ defmodule SlouchingServer.Delivery.AuthTest do
     assert {:error, :unauthorized} = Auth.authenticate("GET", path, body, headers, now)
 
     assert %RequestNonce{} =
-             Repo.get_by(RequestNonce, device_public_key: public_key, nonce: nonce)
+             repo().get_by(RequestNonce, device_public_key: public_key, nonce: nonce)
   end
 
   test "rejects an expired request timestamp" do
@@ -64,4 +63,6 @@ defmodule SlouchingServer.Delivery.AuthTest do
     assert {:error, :unauthorized} =
              Auth.authenticate("GET", "/api/delivery/copies", <<>>, headers, 1_800_000_000)
   end
+
+  defp repo, do: Application.fetch_env!(:slouching_server, :repo_module)
 end

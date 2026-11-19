@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: format, compile and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server
+    env:
+      OTP_VERSION: "29.0.5"
+      ELIXIR_VERSION: "1.20.3"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          version-type: strict
+      # ex_dtls and unifex compile C against OpenSSL; ex_sctp builds a Rust NIF.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev
+      - name: Install Rust for the ex_sctp NIF
+        run: rustup toolchain install stable --profile minimal
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            server/deps
+            server/_build
+          key: mix-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-${{ hashFiles('server/mix.lock') }}
+      - name: mix deps.get
+        run: mix deps.get --check-locked
+      - name: mix format
+        run: mix format --check-formatted
+      - name: mix compile
+        run: mix compile --warnings-as-errors --force
+      - name: mix test
+        run: mix test
+
+  postgres:
+    name: PostgreSQL migrations, mailbox and release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: slouching_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OTP_VERSION: "29.0.5"
+      ELIXIR_VERSION: "1.20.3"
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      SLOUCHING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/slouching_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          version-type: strict
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev postgresql-client
+      - name: Install Rust for the ex_sctp NIF
+        run: rustup toolchain install stable --profile minimal
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            server/deps
+            server/_build
+          key: mix-postgres-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-${{ hashFiles('server/mix.lock') }}
+      - name: Fetch dependencies and run PostgreSQL suite
+        run: |
+          mix deps.get --check-locked
+          mix test --max-cases 4
+      - name: Verify documented Mix paths in dev and prod
+        run: |
+          for mix_env in dev prod; do
+            export MIX_ENV="$mix_env"
+            export SLOUCHING_DATABASE_URL="postgres://postgres:postgres@localhost:5432/slouching_${mix_env}"
+            mix ecto.create
+            mix ecto.migrate
+            mix ecto.migrate
+          done
+      - name: Verify explicit repository selection
+        env:
+          SLOUCHING_DATABASE_URL: postgres://postgres:postgres@localhost:5432/slouching_explicit
+        run: |
+          mix ecto.create -r SlouchingServer.PostgresRepo
+          mix ecto.migrate -r SlouchingServer.PostgresRepo
+      - name: Verify packaged release migrations with a runtime-selected adapter
+        run: |
+          # Build with SQLite selected; choose PostgreSQL only at release startup.
+          MIX_ENV=prod mix release --overwrite
+          createdb slouching_release
+          export SLOUCHING_DATABASE_URL=postgres://postgres:postgres@localhost:5432/slouching_release
+          _build/prod/rel/slouching_server/bin/slouching_server eval 'SlouchingServer.Release.migrate()'
+          _build/prod/rel/slouching_server/bin/slouching_server eval 'SlouchingServer.Release.migrate()'
+      - name: Assert every route created all application tables and versions
+        run: |
+          for database in slouching_test slouching_dev slouching_prod slouching_explicit slouching_release; do
+            test "$(psql -XAt -v ON_ERROR_STOP=1 -d "$database" -c "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tablename IN ('devices', 'delivery_copies', 'delivery_mailbox_usage', 'delivery_request_nonces')")" = 4
+            test "$(psql -XAt -v ON_ERROR_STOP=1 -d "$database" -c 'SELECT count(*) FROM schema_migrations')" = 2
+          done

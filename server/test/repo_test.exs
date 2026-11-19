@@ -2,22 +2,22 @@ defmodule SlouchingServer.RepoTest do
   use ExUnit.Case, async: false
 
   alias SlouchingServer.Directory.Device
-  alias SlouchingServer.Repo
 
-  test "SQLite starts with the directory schema and persists a device row" do
-    assert %{rows: [["devices"]]} =
-             Ecto.Adapters.SQL.query!(
-               Repo,
-               "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'"
-             )
+  setup do
+    repo().delete_all(Device)
+    :ok
+  end
 
+  test "selected repository starts with the directory schema and persists a device row" do
     public_key = :crypto.strong_rand_bytes(32)
 
     assert {:ok, %Device{signing_public_key: ^public_key}} =
              %Device{}
              |> Device.enrollment_changeset(%{signing_public_key: public_key})
-             |> Repo.insert()
+             |> repo().insert()
 
-    assert [%Device{signing_public_key: ^public_key}] = Repo.all(Device)
+    assert [%Device{signing_public_key: ^public_key}] = repo().all(Device)
   end
+
+  defp repo, do: Application.fetch_env!(:slouching_server, :repo_module)
 end

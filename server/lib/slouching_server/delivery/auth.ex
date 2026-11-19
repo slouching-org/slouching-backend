@@ -3,7 +3,7 @@ defmodule SlouchingServer.Delivery.Auth do
 
   import Ecto.Query
 
-  alias SlouchingServer.{Repo, Delivery.RequestNonce, Delivery.Wire}
+  alias SlouchingServer.{Delivery.RequestNonce, Delivery.Wire}
 
   @clock_skew_seconds 60
   @nonce_ttl_seconds 120
@@ -33,10 +33,10 @@ defmodule SlouchingServer.Delivery.Auth do
   end
 
   defp consume_nonce(device, nonce, now) do
-    Repo.delete_all(from(n in RequestNonce, where: n.expires_at_unix <= ^now))
+    repo().delete_all(from(n in RequestNonce, where: n.expires_at_unix <= ^now))
 
     {inserted, _} =
-      Repo.insert_all(
+      repo().insert_all(
         RequestNonce,
         [
           %{device_public_key: device, nonce: nonce, expires_at_unix: now + @nonce_ttl_seconds}
@@ -74,4 +74,6 @@ defmodule SlouchingServer.Delivery.Auth do
       _ -> {:error, :invalid_timestamp}
     end
   end
+
+  defp repo, do: Application.fetch_env!(:slouching_server, :repo_module)
 end

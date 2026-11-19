@@ -1,12 +1,12 @@
 defmodule SlouchingServer.Delivery.MailboxTest do
   use ExUnit.Case, async: false
 
-  alias SlouchingServer.{Repo, Delivery.Mailbox, Delivery.MailboxUsage, Delivery.Copy}
+  alias SlouchingServer.{Delivery.Mailbox, Delivery.MailboxUsage, Delivery.Copy}
   alias SlouchingServer.Delivery.WireTest
 
   setup do
-    Repo.delete_all(Copy)
-    Repo.delete_all(MailboxUsage)
+    repo().delete_all(Copy)
+    repo().delete_all(MailboxUsage)
     :ok
   end
 
@@ -39,7 +39,7 @@ defmodule SlouchingServer.Delivery.MailboxTest do
     assert {:ok, %{copies: [], next_after_id: nil}} =
              Mailbox.list(metadata.recipient_device, 0, 16, now + 1)
 
-    usage = Repo.get(MailboxUsage, metadata.recipient_device)
+    usage = repo().get(MailboxUsage, metadata.recipient_device)
     assert usage.used_bytes == 0
     assert usage.event_count == 0
   end
@@ -52,9 +52,11 @@ defmodule SlouchingServer.Delivery.MailboxTest do
 
     assert {:ok, 1} = Mailbox.expire_all(now + 1)
 
-    assert Repo.get_by(Copy,
+    assert repo().get_by(Copy,
              recipient_device: metadata.recipient_device,
              event_id: metadata.event_id
            ) == nil
   end
+
+  defp repo, do: Application.fetch_env!(:slouching_server, :repo_module)
 end
