@@ -5,7 +5,7 @@ defmodule SlouchingServer.Calls.SfuPeer do
   current authenticated MLS state before starting this process.
   """
 
-  use GenServer
+  use GenServer, restart: :temporary
 
   alias ExWebRTC.{DataChannel, ICECandidate, PeerConnection}
   alias SlouchingServer.Calls.{SfuForwarder, SfuNegotiation}
@@ -25,6 +25,8 @@ defmodule SlouchingServer.Calls.SfuPeer do
 
   @impl true
   def init(opts) do
+    Process.flag(:trap_exit, true)
+
     with {:ok, device_key} <- fetch_device_key(opts),
          {:ok, source_keys} <- fetch_source_keys(opts),
          forwarder when not is_nil(forwarder) <- Keyword.get(opts, :forwarder),
@@ -35,6 +37,8 @@ defmodule SlouchingServer.Calls.SfuPeer do
              Keyword.merge(Keyword.get(opts, :peer_connection_options, []), ice_options)
            ) do
       monitor = Process.monitor(peer_connection)
+      # Keep the ownership link: trapped PC exits are handled by the monitor,
+      # while a forced peer shutdown must also kill its PC and transports.
 
       {:ok,
        %{
@@ -62,14 +66,14 @@ defmodule SlouchingServer.Calls.SfuPeer do
     do: {:reply, {:error, :offer_already_applied}, state}
 
   def handle_call({:answer_offer, sdp}, _from, state) do
-    case SfuNegotiation.answer_offer(state.peer_connection, sdp, state.source_keys) do
+    case safe_answer_offer(state.peer_connection, sdp, state.source_keys) do
       {:ok, negotiation} ->
         outbound_tracks =
           Map.new(negotiation.outbound_track_ids, fn {source_key, track_id} ->
             {source_key, %{audio: track_id}}
           end)
 
-        case SfuForwarder.add_participant(
+        case safe_add_participant(
                state.forwarder,
                state.device_key,
                state.peer_connection,
@@ -78,9 +82,15 @@ defmodule SlouchingServer.Calls.SfuPeer do
           :ok ->
             {:reply, {:ok, negotiation}, %{state | active?: true}}
 
+          {:error, :forwarder_unavailable} ->
+            {:stop, {:shutdown, :forwarder_unavailable}, {:error, :call_unavailable}, state}
+
           {:error, reason} ->
             {:reply, {:error, {:room_rejected_peer, reason}}, state}
         end
+
+      {:peer_crashed, reason} ->
+        {:stop, {:shutdown, :peer_connection_failed}, {:error, reason}, state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -88,7 +98,12 @@ defmodule SlouchingServer.Calls.SfuPeer do
   end
 
   def handle_call({:add_ice_candidate, candidate}, _from, %{active?: true} = state) do
-    {:reply, PeerConnection.add_ice_candidate(state.peer_connection, candidate), state}
+    try do
+      {:reply, PeerConnection.add_ice_candidate(state.peer_connection, candidate), state}
+    catch
+      :exit, _reason ->
+        {:stop, {:shutdown, :peer_connection_failed}, {:error, :invalid_ice_candidate}, state}
+    end
   end
 
   def handle_call({:add_ice_candidate, _candidate}, _from, state),
@@ -219,9 +234,34 @@ defmodule SlouchingServer.Calls.SfuPeer do
 
   @impl true
   def terminate(_reason, state) do
-    if state.active?, do: SfuForwarder.remove_participant(state.forwarder, state.device_key)
-    if Process.alive?(state.peer_connection), do: PeerConnection.stop(state.peer_connection)
+    if state.active? do
+      safe_call(fn -> SfuForwarder.remove_participant(state.forwarder, state.device_key) end)
+    end
+
+    if Process.alive?(state.peer_connection) do
+      safe_call(fn -> PeerConnection.stop(state.peer_connection) end)
+    end
+
     :ok
+  end
+
+  defp safe_answer_offer(peer_connection, sdp, source_keys) do
+    SfuNegotiation.answer_offer(peer_connection, sdp, source_keys)
+  catch
+    :exit, _reason -> {:peer_crashed, :invalid_sdp}
+  end
+
+  defp safe_add_participant(forwarder, device_key, peer_connection, outbound_tracks) do
+    SfuForwarder.add_participant(forwarder, device_key, peer_connection, outbound_tracks)
+  catch
+    :exit, _reason -> {:error, :forwarder_unavailable}
+  end
+
+  defp safe_call(fun) do
+    _ = fun.()
+    :ok
+  catch
+    :exit, _reason -> :ok
   end
 
   defp fetch_device_key(opts) do

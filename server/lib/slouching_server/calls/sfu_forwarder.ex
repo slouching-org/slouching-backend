@@ -7,7 +7,7 @@ defmodule SlouchingServer.Calls.SfuForwarder do
   per-source outbound-track map. It never parses or decrypts the RTP payload.
   """
 
-  use GenServer
+  use GenServer, restart: :temporary
 
   alias ExWebRTC.PeerConnection
 
