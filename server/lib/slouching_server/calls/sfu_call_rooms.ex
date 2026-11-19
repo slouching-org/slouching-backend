@@ -153,15 +153,28 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
     {:noreply, state}
   end
 
-  def handle_info({:DOWN, monitor, :process, _pid, _reason}, state) do
+  def handle_info({:DOWN, monitor, :process, _pid, reason}, state) do
     case Map.pop(state.monitors, monitor) do
       {nil, _monitors} ->
         {:noreply, state}
 
       {{:forwarder, call_id}, monitors} ->
-        {:noreply, drop_room(%{state | monitors: monitors}, call_id)}
+        {:noreply, drop_room(%{state | monitors: monitors}, call_id, {:forwarder_down, reason})}
 
       {{:peer, call_id, device_key}, monitors} ->
+        case fetch_participant(state, call_id, device_key) do
+          {:ok, _participant} ->
+            notify_participant(
+              state,
+              call_id,
+              device_key,
+              {:sfu_call_ended, call_id, device_key, reason}
+            )
+
+          _ ->
+            :ok
+        end
+
         case drop_participant(%{state | monitors: monitors}, call_id, device_key) do
           {:ok, next} -> {:noreply, next}
           :error -> {:noreply, %{state | monitors: monitors}}
@@ -387,7 +400,7 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
     end
   end
 
-  defp drop_room(state, call_id) do
+  defp drop_room(state, call_id, reason) do
     case Map.pop(state.rooms, call_id) do
       {nil, _rooms} ->
         state
@@ -399,7 +412,10 @@ defmodule SlouchingServer.Calls.SfuCallRooms do
           Enum.reduce(
             room.participants,
             Map.delete(state.monitors, room.forwarder_monitor),
-            fn {_device_key, participant}, acc ->
+            fn {device_key, participant}, acc ->
+              unless participant.leaving?,
+                do: send(participant.owner, {:sfu_call_ended, call_id, device_key, reason})
+
               Enum.each(participant.leave_waiters, &GenServer.reply(&1, :ok))
               Process.demonitor(participant.owner_monitor, [:flush])
               Process.demonitor(participant.peer_monitor, [:flush])

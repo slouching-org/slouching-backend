@@ -166,8 +166,15 @@ defmodule SlouchingServer.HandshakeSocket do
 
   def handle_in({payload, [opcode: :binary]}, %{phase: :active, call_id: nil} = state) do
     case ClientFrame.decode(payload) do
-      %ClientFrame{payload: {:sfu_call_join, request}} -> join_call(request, state)
-      _ -> call_error(<<>>, :join_required, state)
+      %ClientFrame{payload: {:sfu_call_join, request}} ->
+        join_call(request, state)
+
+      %ClientFrame{payload: {:sfu_call_leave, %{call_id: call_id}}}
+      when byte_size(call_id) == 16 ->
+        {:stop, :normal, {1000, "call left"}, state}
+
+      _ ->
+        call_error(<<>>, :join_required, state)
     end
   rescue
     Protobuf.DecodeError -> {:stop, :invalid_call_frame, {1002, "Invalid protobuf"}, state}
@@ -195,7 +202,11 @@ defmodule SlouchingServer.HandshakeSocket do
 
       %ClientFrame{payload: {:sfu_call_leave, %{call_id: call_id}}}
       when call_id == state.call_id ->
-        :ok = SfuCallRooms.leave(state.call_rooms, call_id, state.device_public_key)
+        case SfuCallRooms.leave(state.call_rooms, call_id, state.device_public_key) do
+          :ok -> :ok
+          {:error, :unknown_participant} -> :ok
+        end
+
         {:stop, :normal, {1000, "call left"}, %{state | call_id: nil}}
 
       _ ->
@@ -248,6 +259,13 @@ defmodule SlouchingServer.HandshakeSocket do
 
     frame = %ServerFrame{payload: {:sfu_ice_candidate, message}}
     {:push, {:binary, ServerFrame.encode(frame)}, state}
+  end
+
+  def handle_info(
+        {:sfu_call_ended, call_id, device_key, reason},
+        %{phase: :active, call_id: call_id, device_public_key: device_key} = state
+      ) do
+    call_error(call_id, ended_error_code(reason), %{state | call_id: nil})
   end
 
   def handle_info(_message, state), do: {:ok, state}
@@ -354,6 +372,17 @@ defmodule SlouchingServer.HandshakeSocket do
   defp error_code(reason) when is_atom(reason), do: reason
   defp error_code({:room_rejected_peer, reason}) when is_atom(reason), do: reason
   defp error_code(_reason), do: :call_request_failed
+
+  defp ended_error_code({:shutdown, {:peer_connection, :closed}}), do: :peer_connection_closed
+  defp ended_error_code({:shutdown, {:peer_connection, :failed}}), do: :peer_connection_failed
+
+  defp ended_error_code({:shutdown, {:peer_connection_down, _reason}}),
+    do: :peer_connection_failed
+
+  defp ended_error_code({:shutdown, {_tag, reason}}) when is_atom(reason), do: reason
+  defp ended_error_code({:shutdown, reason}) when is_atom(reason), do: reason
+  defp ended_error_code(reason) when is_atom(reason), do: reason
+  defp ended_error_code(_reason), do: :call_ended
 
   defp schedule_timeout(kind, generation, interval_ms) do
     Process.send_after(self(), {:socket_timeout, kind, generation}, interval_ms)

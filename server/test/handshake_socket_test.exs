@@ -11,6 +11,7 @@ defmodule SlouchingServer.HandshakeSocketTest do
     ClientFrame,
     ClientHello,
     SfuCallAnswer,
+    SfuCallError,
     SfuCallJoin,
     SfuCallLeave,
     SfuCallOffer,
@@ -319,6 +320,83 @@ defmodule SlouchingServer.HandshakeSocketTest do
     assert {:ok, refreshed} = HandshakeSocket.handle_control({<<1>>, opcode: :ping}, active)
     assert Process.read_timer(active.timer_ref) == false
     assert is_integer(Process.read_timer(refreshed.timer_ref))
+  end
+
+  test "clears call state after asynchronous peer exit so leave and rejoin succeed" do
+    {device_key, device_secret} = :crypto.generate_key(:eddsa, :ed25519)
+    {remote_key, _remote_secret} = :crypto.generate_key(:eddsa, :ed25519)
+    call_id = :crypto.strong_rand_bytes(16)
+    group_id = :crypto.strong_rand_bytes(16)
+    roster = [device_key, remote_key]
+    {:ok, initial} = HandshakeSocket.init(:await_hello)
+    active = authenticate_device(initial, device_key, device_secret)
+    signed = SlouchingServer.Calls.SfuCallRooms.roster_payload(call_id, group_id, 1, roster)
+
+    join_frame = %ClientFrame{
+      payload:
+        {:sfu_call_join,
+         %SfuCallJoin{
+           call_id: call_id,
+           group_id: group_id,
+           epoch: 1,
+           roster: roster,
+           roster_signature: :crypto.sign(:eddsa, :none, signed, [device_secret, :ed25519])
+         }}
+    }
+
+    assert {:push, {:binary, _joined_bytes}, joined_state} =
+             HandshakeSocket.handle_in({ClientFrame.encode(join_frame), opcode: :binary}, active)
+
+    try do
+      peer =
+        :sys.get_state(SlouchingServer.Calls.SfuCallRooms).rooms[call_id].participants[device_key].peer
+
+      GenServer.stop(peer, {:shutdown, {:peer_connection, :closed}})
+      _ = :sys.get_state(SlouchingServer.Calls.SfuCallRooms)
+
+      leave_frame = %ClientFrame{payload: {:sfu_call_leave, %SfuCallLeave{call_id: call_id}}}
+
+      assert {:stop, :normal, {1000, "call left"}, %{call_id: nil}} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(leave_frame), opcode: :binary},
+                 joined_state
+               )
+
+      assert_receive {:sfu_call_ended, ^call_id, ^device_key,
+                      {:shutdown, {:peer_connection, :closed}}} =
+                       ended_msg,
+                     500
+
+      assert {:push, {:binary, error_bytes}, cleared_state} =
+               HandshakeSocket.handle_info(ended_msg, joined_state)
+
+      assert cleared_state.call_id == nil
+
+      assert %ServerFrame{
+               payload:
+                 {:sfu_call_error,
+                  %SfuCallError{call_id: ^call_id, code: "peer_connection_closed"}}
+             } = ServerFrame.decode(error_bytes)
+
+      assert {:push, {:binary, rejoined_bytes}, rejoined_state} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(join_frame), opcode: :binary},
+                 cleared_state
+               )
+
+      assert %ServerFrame{payload: {:sfu_call_joined, %SfuCallJoined{call_id: ^call_id}}} =
+               ServerFrame.decode(rejoined_bytes)
+
+      assert rejoined_state.call_id == call_id
+
+      assert {:stop, :normal, {1000, "call left"}, ^cleared_state} =
+               HandshakeSocket.handle_in(
+                 {ClientFrame.encode(leave_frame), opcode: :binary},
+                 cleared_state
+               )
+    after
+      _ = SlouchingServer.Calls.SfuCallRooms.leave(call_id, device_key)
+    end
   end
 
   defp encode_masked_ws_frame(first_byte, payload) do

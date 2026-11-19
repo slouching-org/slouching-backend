@@ -459,6 +459,36 @@ defmodule SlouchingServer.Calls.SfuCallRoomsTest do
     {call_id, key, peer, :sys.get_state(peer).peer_connection}
   end
 
+  test "notifies the signaling owner when a participant peer exits asynchronously" do
+    {:ok, rooms} = SfuCallRooms.start_link([])
+    {first_pub, first_priv} = :crypto.generate_key(:eddsa, :ed25519)
+    {second_pub, _} = :crypto.generate_key(:eddsa, :ed25519)
+    call_id = :crypto.strong_rand_bytes(16)
+    group_id = :crypto.strong_rand_bytes(16)
+    roster = [first_pub, second_pub]
+
+    assert :ok =
+             SfuCallRooms.join(
+               rooms,
+               call_id,
+               group_id,
+               1,
+               roster,
+               first_pub,
+               sign(call_id, group_id, 1, roster, first_priv),
+               self()
+             )
+
+    peer = :sys.get_state(rooms).rooms[call_id].participants[first_pub].peer
+    GenServer.stop(peer, {:shutdown, {:peer_connection, :failed}})
+
+    assert_receive {:sfu_call_ended, ^call_id, ^first_pub,
+                    {:shutdown, {:peer_connection, :failed}}},
+                   500
+
+    GenServer.stop(rooms)
+  end
+
   defp wait_until_call_queued(peer) do
     result =
       Enum.reduce_while(1..200, :waiting, fn _, :waiting ->
