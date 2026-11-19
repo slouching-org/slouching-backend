@@ -42,16 +42,22 @@ end
 
 config :slouching_server, server_tls_options: tls_options
 
-if sqlite_path = System.get_env("SLOUCHING_SQLITE_PATH") do
-  config :slouching_server, SlouchingServer.Repo, database: Path.expand(sqlite_path)
+if config_env() != :test do
+  if sqlite_path = System.get_env("SLOUCHING_SQLITE_PATH") do
+    config :slouching_server, SlouchingServer.Repo, database: Path.expand(sqlite_path)
+  end
 end
 
-if database_url = System.get_env("SLOUCHING_DATABASE_URL") do
-  config :slouching_server,
-    ecto_repos: [SlouchingServer.PostgresRepo],
-    repo_module: SlouchingServer.PostgresRepo,
-    start_repo: true
+database_url =
+  if config_env() == :test,
+    do: System.get_env("SLOUCHING_TEST_DATABASE_URL"),
+    else: System.get_env("SLOUCHING_DATABASE_URL")
 
+# Re-evaluate at release startup: the build environment must not select the adapter.
+repo = if database_url, do: SlouchingServer.PostgresRepo, else: SlouchingServer.Repo
+config :slouching_server, ecto_repos: [repo], repo_module: repo
+
+if database_url do
   config :slouching_server, SlouchingServer.PostgresRepo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("SLOUCHING_DATABASE_POOL_SIZE", "5")),

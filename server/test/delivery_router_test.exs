@@ -8,16 +8,15 @@ defmodule SlouchingServer.Delivery.RouterTest do
     Delivery.Copy,
     Delivery.MailboxUsage,
     Delivery.RequestNonce,
-    Repo,
     Router
   }
 
   alias SlouchingServer.Delivery.WireTest
 
   setup do
-    Repo.delete_all(Copy)
-    Repo.delete_all(MailboxUsage)
-    Repo.delete_all(RequestNonce)
+    repo().delete_all(Copy)
+    repo().delete_all(MailboxUsage)
+    repo().delete_all(RequestNonce)
     :ok
   end
 
@@ -87,4 +86,6 @@ defmodule SlouchingServer.Delivery.RouterTest do
     |> put_req_header("x-slouching-nonce", Base.encode16(nonce, case: :lower))
     |> put_req_header("x-slouching-signature", Base.encode16(signature, case: :lower))
   end
+
+  defp repo, do: Application.fetch_env!(:slouching_server, :repo_module)
 end

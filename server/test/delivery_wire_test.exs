@@ -22,9 +22,12 @@ defmodule SlouchingServer.Delivery.WireTest do
     assert {:error, :invalid_envelope} = Wire.parse(payload, now + 301)
   end
 
-  def signed_copy(expires_at) do
+  def signed_copy(expires_at, opts \\ []) do
     {author, private} = :crypto.generate_key(:eddsa, :ed25519)
-    {recipient, recipient_private} = :crypto.generate_key(:eddsa, :ed25519)
+
+    {recipient, recipient_private} =
+      Keyword.get_lazy(opts, :recipient, fn -> :crypto.generate_key(:eddsa, :ed25519) end)
+
     event_id = :crypto.strong_rand_bytes(16)
     group_id = :crypto.strong_rand_bytes(16)
     epoch = 7

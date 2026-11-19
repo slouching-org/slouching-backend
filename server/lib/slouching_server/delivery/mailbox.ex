@@ -3,7 +3,7 @@ defmodule SlouchingServer.Delivery.Mailbox do
 
   import Ecto.Query
 
-  alias SlouchingServer.{Repo, Delivery.Copy, Delivery.MailboxUsage, Delivery.Wire}
+  alias SlouchingServer.{Delivery.Copy, Delivery.MailboxUsage, Delivery.Wire}
 
   @max_copy_bytes 96 * 1024
   @max_mailbox_bytes 64 * 1024 * 1024
@@ -15,10 +15,10 @@ defmodule SlouchingServer.Delivery.Mailbox do
   def store(payload, now)
       when is_binary(payload) and byte_size(payload) <= @max_copy_bytes do
     with {:ok, metadata} <- Wire.parse(payload, now) do
-      Repo.transaction(fn ->
+      repo().transaction(fn ->
         expire_for_recipient(metadata.recipient_device, now)
 
-        case Repo.get_by(Copy,
+        case repo().get_by(Copy,
                recipient_device: metadata.recipient_device,
                event_id: metadata.event_id
              ) do
@@ -26,7 +26,7 @@ defmodule SlouchingServer.Delivery.Mailbox do
             :already_stored
 
           %Copy{} ->
-            Repo.rollback(:event_conflict)
+            repo().rollback(:event_conflict)
 
           nil ->
             reserve_and_insert(payload, metadata)
@@ -49,11 +49,11 @@ defmodule SlouchingServer.Delivery.Mailbox do
       when is_binary(recipient) and is_integer(after_id) and after_id >= 0 and is_integer(limit) do
     page_size = min(max(limit, 1), @max_page_size)
 
-    Repo.transaction(fn ->
+    repo().transaction(fn ->
       expire_for_recipient(recipient, now)
 
       rows =
-        Repo.all(
+        repo().all(
           from(c in Copy,
             where: c.recipient_device == ^recipient and c.id > ^after_id,
             order_by: [asc: c.id],
@@ -88,15 +88,15 @@ defmodule SlouchingServer.Delivery.Mailbox do
 
   def acknowledge(recipient, event_id, now)
       when is_binary(recipient) and is_binary(event_id) and byte_size(event_id) == 16 do
-    Repo.transaction(fn ->
+    repo().transaction(fn ->
       expire_for_recipient(recipient, now)
 
-      case Repo.get_by(Copy, recipient_device: recipient, event_id: event_id) do
+      case repo().get_by(Copy, recipient_device: recipient, event_id: event_id) do
         nil ->
           :ok
 
         copy ->
-          Repo.delete!(copy)
+          repo().delete!(copy)
           adjust_usage(recipient, -copy.size_bytes, -1)
           :ok
       end
@@ -107,23 +107,21 @@ defmodule SlouchingServer.Delivery.Mailbox do
   def acknowledge(_recipient, _event_id, _now), do: {:error, :invalid_event_id}
 
   def expire_all(now \\ System.system_time(:second)) do
-    Repo.transaction(fn ->
-      expired =
-        Repo.all(
+    repo().transaction(fn ->
+      recipients =
+        repo().all(
           from(c in Copy,
             where: c.expires_at_unix <= ^now,
-            group_by: c.recipient_device,
-            select: {c.recipient_device, sum(c.size_bytes), count(c.id)}
+            distinct: true,
+            order_by: c.recipient_device,
+            select: c.recipient_device
           )
         )
 
-      Repo.delete_all(from(c in Copy, where: c.expires_at_unix <= ^now))
-
-      Enum.each(expired, fn {recipient, bytes, events} ->
-        adjust_usage(recipient, -bytes, -events)
+      # Use the same recipient lock as upload/list/ACK, in a stable order.
+      Enum.reduce(recipients, 0, fn recipient, total ->
+        total + expire_for_recipient(recipient, now)
       end)
-
-      Enum.reduce(expired, 0, fn {_recipient, _bytes, events}, total -> total + events end)
     end)
     |> unwrap_transaction()
   end
@@ -131,7 +129,7 @@ defmodule SlouchingServer.Delivery.Mailbox do
   defp reserve_and_insert(payload, metadata) do
     size = byte_size(payload)
 
-    Repo.insert_all(
+    repo().insert_all(
       MailboxUsage,
       [%{recipient_device: metadata.recipient_device, used_bytes: 0, event_count: 0}],
       on_conflict: :nothing,
@@ -139,7 +137,7 @@ defmodule SlouchingServer.Delivery.Mailbox do
     )
 
     {reserved, _} =
-      Repo.update_all(
+      repo().update_all(
         from(u in MailboxUsage,
           where:
             u.recipient_device == ^metadata.recipient_device and
@@ -149,7 +147,7 @@ defmodule SlouchingServer.Delivery.Mailbox do
       )
 
     if reserved == 0 do
-      Repo.rollback(:quota_exceeded)
+      repo().rollback(:quota_exceeded)
     end
 
     attrs = %{
@@ -161,15 +159,17 @@ defmodule SlouchingServer.Delivery.Mailbox do
       expires_at_unix: metadata.expires_at_unix
     }
 
-    case %Copy{} |> Copy.changeset(attrs) |> Repo.insert() do
+    case %Copy{} |> Copy.changeset(attrs) |> repo().insert() do
       {:ok, _copy} -> :stored
-      {:error, _changeset} -> Repo.rollback(:event_conflict)
+      {:error, _changeset} -> repo().rollback(:event_conflict)
     end
   end
 
   defp expire_for_recipient(recipient, now) do
+    lock_recipient(recipient)
+
     expired =
-      Repo.all(
+      repo().all(
         from(c in Copy,
           where: c.recipient_device == ^recipient and c.expires_at_unix <= ^now,
           select: {c.id, c.size_bytes}
@@ -179,15 +179,33 @@ defmodule SlouchingServer.Delivery.Mailbox do
     if expired != [] do
       ids = Enum.map(expired, &elem(&1, 0))
       bytes = Enum.reduce(expired, 0, fn {_id, size}, sum -> sum + size end)
-      Repo.delete_all(from(c in Copy, where: c.id in ^ids))
+      repo().delete_all(from(c in Copy, where: c.id in ^ids))
       adjust_usage(recipient, -bytes, -length(expired))
     end
 
-    :ok
+    length(expired)
+  end
+
+  # SQLite's single connection already serializes these transactions. PostgreSQL
+  # needs a row shared by every operation, including an empty mailbox. Keep usage
+  # rows after expiry/ACK so the lock identity remains stable.
+  defp lock_recipient(recipient) do
+    if repo().__adapter__() == Ecto.Adapters.Postgres do
+      repo().insert_all(
+        MailboxUsage,
+        [%{recipient_device: recipient, used_bytes: 0, event_count: 0}],
+        on_conflict: :nothing,
+        conflict_target: [:recipient_device]
+      )
+
+      repo().one!(
+        from(u in MailboxUsage, where: u.recipient_device == ^recipient, lock: "FOR UPDATE")
+      )
+    end
   end
 
   defp adjust_usage(recipient, byte_delta, event_delta) do
-    Repo.update_all(
+    repo().update_all(
       from(u in MailboxUsage, where: u.recipient_device == ^recipient),
       inc: [used_bytes: byte_delta, event_count: event_delta]
     )
@@ -195,4 +213,6 @@ defmodule SlouchingServer.Delivery.Mailbox do
 
   defp unwrap_transaction({:ok, result}), do: {:ok, result}
   defp unwrap_transaction({:error, reason}), do: {:error, reason}
+
+  defp repo, do: Application.fetch_env!(:slouching_server, :repo_module)
 end

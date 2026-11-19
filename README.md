@@ -141,12 +141,50 @@ service, install the new release, run the migration command, and start it
 again. `server/scripts/smoke-release.sh` builds a release, migrates an isolated
 SQLite database, and verifies the packaged HTTP process.
 
-To choose PostgreSQL for a deployment, set `SLOUCHING_DATABASE_URL` to a
-PostgreSQL URL and optionally `SLOUCHING_DATABASE_POOL_SIZE` (default `5`),
-then run `MIX_ENV=prod mix ecto.create` and `MIX_ENV=prod mix ecto.migrate`
-with the same environment before starting the service. When the URL is absent,
-the runtime selects the local SQLite Repo. The PostgreSQL Repo is a deployment
-option and is not started or contacted in the default local configuration.
+To choose PostgreSQL (tested with PostgreSQL 16), set the URL before running
+any Mix database task. Both adapters use the migrations in `server/priv/repo`:
+
+```sh
+# From server/, with a PostgreSQL role allowed to create the database:
+export SLOUCHING_DATABASE_URL=postgres://USER:PASSWORD@HOST/slouching
+MIX_ENV=prod mix ecto.create
+MIX_ENV=prod mix ecto.migrate
+# Re-running migrations is safe. Explicit -r SlouchingServer.PostgresRepo
+# selection also uses the same migration directory.
+```
+
+`SLOUCHING_DATABASE_POOL_SIZE` defaults to `5`. The same commands without
+`MIX_ENV=prod` work in development. When the URL is absent, Mix tasks and the
+running service select SQLite. No PostgreSQL service is contacted by default.
+Existing SQLite databases retain their migration versions and data; removing
+unsupported binary size modifiers does not rebuild already migrated tables.
+Binary identifier lengths remain validated by the wire parser and changesets.
+
+For a packaged release, provision the PostgreSQL database first (the migration
+task creates tables, not databases), then run with the same URL:
+
+```sh
+_build/prod/rel/slouching_server/bin/slouching_server eval 'SlouchingServer.Release.migrate()'
+_build/prod/rel/slouching_server/bin/slouching_server start
+```
+
+The adapter is selected at release startup, independently of the build
+environment. A successful `/health` response alone does not verify the schema.
+
+Tests use in-memory SQLite by default and ignore deployment database settings.
+To run the entire suite against PostgreSQL, create a **dedicated, disposable**
+test database and set `SLOUCHING_TEST_DATABASE_URL` (tests delete application
+rows in that database):
+
+```sh
+SLOUCHING_TEST_DATABASE_URL=postgres://USER:PASSWORD@HOST/slouching_test mix test
+```
+
+The six PostgreSQL-specific schema, quota and concurrency tests are skipped
+without that variable. The existing mailbox HTTP, replay, expiry and device
+tests run against the selected test adapter in either mode. PostgreSQL mailbox
+operations lock a recipient's usage row to keep duplicate uploads, ACKs and
+expiry from racing quota updates; SQLite keeps its single-connection default.
 
 In another terminal:
 
