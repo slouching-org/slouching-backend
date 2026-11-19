@@ -1,5 +1,12 @@
 /target/
 /server/_build/
 /server/deps/
+/server/cover/
+/server/doc/
 /server/priv/repo/*.sqlite3*
+/server/*.ez
+/server/slouching_server-*.tar
+/server/.elixir_ls/
+erl_crash.dump
 *.swp
+.DS_Store
